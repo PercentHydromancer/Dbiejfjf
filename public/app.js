@@ -5,14 +5,20 @@ const extension = {html:'html',css:'css',js:'js',javascript:'js',json:'json',pyt
 async function request(url,opts={}) {
  const r=await fetch('/api'+url,{credentials:'same-origin',...opts,headers:{'Content-Type':'application/json',...opts.headers}});
  const data=await r.json().catch(()=>({}));
- if(!r.ok)throw Error(data.error||'Ошибка HTTP '+r.status);
+ if(!r.ok){
+  if(r.status===401&&state.user&&!url.startsWith('/admin/')){
+   state.user=null;state.chatId=null;$('#app').hidden=true;$('#auth').hidden=false;
+   $('#authError').textContent='Вход завершён. Войдите снова. Если это произошло после обновления Render, настройте постоянную базу PostgreSQL.';
+  }
+  throw Error(data.error||'Ошибка HTTP '+r.status);
+ }
  return data;
 }
 function notice(msg) {const el=$('#notice');el.textContent=msg||'';el.hidden=!msg}
 function showApp(user) {
  state.user=user;$('#username').textContent=user.name;$('.user-circle').textContent=user.name[0].toUpperCase();
  $('#auth').hidden=true;$('#app').hidden=false;
- refreshChats();refreshAI();
+ refreshChats().catch(e=>notice(e.message));refreshAI().catch(()=>{});
 }
 function openModal(title) {$('#modalTitle').textContent=title;$('#modalBody').replaceChildren();$('#modal').showModal()}
 function button(text,fn,cls='action'){const el=document.createElement('button');el.type='button';el.className=cls;el.textContent=text;el.addEventListener('click',fn);return el}
@@ -96,6 +102,13 @@ function render(m){
  if(m.role==='assistant'){
   row.append(paragraph('✦ Malik GPT'+(m.model?' · '+m.model:''),'message-label'));
   showCode(bubble,m.content);
+ }else if(m.voice){
+  const caption=document.createElement('div');
+  caption.className='voice-caption';caption.textContent='🎤 Голосовое сообщение · '+(m.voice.duration||0)+' с';
+  const audio=document.createElement('audio');audio.controls=true;audio.preload='none';
+  audio.src='/api/chats/'+encodeURIComponent(state.chatId)+'/audio/'+encodeURIComponent(m.voice.id);
+  audio.setAttribute('aria-label','Воспроизвести голосовое сообщение');
+  bubble.append(caption,audio);
  }else bubble.textContent=m.content;
  row.append(bubble);
  if(m.role==='assistant'){
@@ -158,8 +171,7 @@ async function sendMessage(e){
   $('#prompt').value='';$('#prompt').style.height='';
   render({role:'user',content:text});
   await refreshChats();
-  const pending={role:'assistant',content:'Думаю…'};
-  const {message}=await request('/chats/'+id+'/reply',{method:'POST',body:'{}'});
+   const {message}=await request('/chats/'+id+'/reply',{method:'POST',body:'{}'});
   if(state.chatId===id)render(message);
  }catch(err){
   notice(err.message);
@@ -235,10 +247,130 @@ $('#authForm').addEventListener('submit',async e=>{
  e.preventDefault();$('#authError').textContent='';
  try{
   const {user}=await request(state.signup?'/register':'/login',{method:'POST',body:JSON.stringify({name:$('#authName').value,password:$('#authPass').value})});
-  showApp(user);
+  // Verify that the browser actually stored the session cookie before showing the app.
+  const checked=await request('/me');
+  showApp(checked.user);
  }catch(e){$('#authError').textContent=e.message}
 });
+
+let recorder=null,voiceStream=null,voiceChunks=[],voiceStarted=0,voiceTimeout=null,voiceTicker=null;
+function stopVoiceUI(){
+ clearTimeout(voiceTimeout);clearInterval(voiceTicker);
+ voiceTimeout=null;voiceTicker=null;
+ const b=$('#voiceToggle');b.classList.remove('recording');b.textContent='🎙';b.title='Записать голосовое';b.disabled=false;
+ $('#recordStatus').hidden=true;
+}
+function closeTools(){
+ $('#toolMenu').hidden=true;
+ $('#plusTools').setAttribute('aria-expanded','false');
+}
+async function voiceToggle(){
+ closeTools();
+ if(recorder?.state==='recording'){recorder.stop();return}
+ if(state.busy)return notice('Подожди завершения текущей операции.');
+ if(!navigator.mediaDevices?.getUserMedia||typeof MediaRecorder==='undefined'){
+  return notice('Этот браузер не поддерживает запись голосовых сообщений. Попробуй Safari или Chrome через HTTPS.');
+ }
+ try{
+  const stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true}});
+  const formats=['audio/mp4','audio/webm;codecs=opus','audio/webm','audio/ogg;codecs=opus'];
+  const supported=formats.find(m=>MediaRecorder.isTypeSupported(m));
+  if(!supported){stream.getTracks().forEach(t=>t.stop());return notice('Запись аудио не поддерживается этим браузером.')}
+  voiceStream=stream;voiceChunks=[];
+  recorder=new MediaRecorder(stream,{mimeType:supported,audioBitsPerSecond:32000});
+  voiceStarted=Date.now();
+  recorder.addEventListener('dataavailable',e=>{if(e.data?.size)voiceChunks.push(e.data)});
+  recorder.addEventListener('stop',async()=>{
+   const duration=(Date.now()-voiceStarted)/1000;
+   const mime=recorder.mimeType.split(';')[0];
+   const blob=new Blob(voiceChunks,{type:mime});
+   voiceStream?.getTracks().forEach(t=>t.stop());voiceStream=null;recorder=null;stopVoiceUI();
+   if(!blob.size)return notice('Пустая запись — попробуй ещё раз.');
+   if(blob.size>2*1024*1024)return notice('Запись превышает 2 МБ. Запиши более короткое сообщение.');
+   state.busy=true;$('#send').disabled=true;
+   try{
+    if(!state.chatId)await createChat();
+    const arr=new Uint8Array(await blob.arrayBuffer());
+    // Convert only a bounded 2 MB audio blob into base64.
+    let binary='';for(let i=0;i<arr.length;i+=32768)binary+=String.fromCharCode(...arr.subarray(i,i+32768));
+    const base64=btoa(binary),id=state.chatId;
+    const {message}=await request('/chats/'+encodeURIComponent(id)+'/voice',{
+     method:'POST',body:JSON.stringify({mime,base64,duration:Math.min(90,Math.round(duration))})
+    });
+    if(state.chatId===id)render(message);
+    await refreshChats();notice('Голосовое сообщение сохранено. Его можно прослушать в чате.');
+   }catch(e){notice('Не удалось сохранить запись: '+e.message)}
+   finally{state.busy=false;$('#send').disabled=false}
+  },{once:true});
+  recorder.start(300);
+  const b=$('#voiceToggle');b.classList.add('recording');b.textContent='■';b.title='Остановить и отправить запись';
+  $('#recordStatus').hidden=false;
+  $('#recordStatus').textContent='● Идёт запись. Нажми ■ для отправки. Максимум 90 секунд.';
+  voiceTicker=setInterval(()=>{
+   if(recorder?.state!=='recording')return;
+   const elapsed=Math.floor((Date.now()-voiceStarted)/1000);
+   $('#recordStatus').textContent='● Запись '+Math.floor(elapsed/60)+':'+String(elapsed%60).padStart(2,'0')+' · нажми ■ для отправки';
+  },1000);
+  voiceTimeout=setTimeout(()=>{if(recorder?.state==='recording')recorder.stop()},85000);
+ }catch(e){voiceStream?.getTracks().forEach(t=>t.stop());recorder=null;stopVoiceUI();notice('Нет доступа к микрофону: '+e.message)}
+}
+async function exportChat(){
+ closeTools();
+ if(!state.chatId)return notice('Сначала открой чат, который хочешь скачать.');
+ try{
+  const {chat}=await request('/chats/'+encodeURIComponent(state.chatId));
+  const text=[chat.title,'',...chat.messages.map(m=>
+   (m.role==='user'?'Пользователь':'Malik GPT')+': '+(m.voice?'[Голосовое сообщение — аудиозапись хранится в чате]':m.content))].join('\n\n');
+  saveBlob(new Blob([text],{type:'text/plain;charset=utf-8'}),'malik-chat.txt');
+ }catch(e){notice(e.message)}
+}
+async function openAdmin(){
+ closeSidebar();
+ openModal('⚙ Админ-панель');
+ const body=$('#modalBody');
+ try{
+  const config=await request('/admin/status');
+  if(!config.configured){
+   body.append(paragraph('Админка пока не настроена. На Render → Environment установи ADMIN_LOGIN и ADMIN_PASSWORD (пароль не короче 12 символов), затем сделай Deploy. В GitHub пароль не добавляй.'));
+   return;
+  }
+  await request('/admin/overview').then(showAdminStats).catch(()=>{
+   body.replaceChildren();
+   body.append(paragraph('Вход только для администратора. Учётная запись пользователя не заменяет админ-пароль.'));
+   const login=field('Логин администратора'),pass=field('Пароль администратора');pass.type='password';
+   const feedback=paragraph('');feedback.setAttribute('role','status');
+   const submit=button('Войти в админку',async()=>{
+    submit.disabled=true;feedback.textContent='';
+    try{await request('/admin/login',{method:'POST',body:JSON.stringify({login:login.value,password:pass.value})});
+     const stats=await request('/admin/overview');showAdminStats(stats);
+    }catch(e){feedback.textContent=e.message}finally{submit.disabled=false}
+   });
+   body.append(login,pass,submit,feedback);
+  });
+ }catch(e){body.append(paragraph(e.message,'error'))}
+}
+function showAdminStats(stats){
+ const body=$('#modalBody');body.replaceChildren();
+ body.append(paragraph('Статистика проекта · данные только для администратора.'));
+ const summary=document.createElement('div');summary.className='admin-stats';
+ for(const [label,num] of [['Пользователи',stats.users],['Чаты',stats.chats],['Сообщения',stats.messages],['Заметки',stats.notes]]){
+  const tile=document.createElement('div'),strong=document.createElement('strong');
+  strong.textContent=String(num);tile.append(strong,paragraph(label));summary.append(tile);
+ }
+ body.append(summary);
+ const heading=document.createElement('h3');heading.textContent='Аккаунты';body.append(heading);
+ for(const u of stats.recentUsers||[]){
+  const p=paragraph(u.name+' · чатов: '+u.chats+' · заметок: '+u.notes,'admin-user');
+  body.append(p);
+ }
+ body.append(button('Выйти из админки',async()=>{
+  try{await request('/admin/logout',{method:'POST',body:'{}'});$('#modal').close()}
+  catch(e){body.append(paragraph(e.message,'error'))}
+ }));
+}
+
 $('#newChat').addEventListener('click',()=>createChat().catch(e=>notice(e.message)));
+$('#adminOpen').addEventListener('click',()=>openAdmin().catch(e=>notice(e.message)));
 $('#openBuilder').addEventListener('click',builder);
 $('#openNotes').addEventListener('click',()=>notes().catch(e=>alert(e.message)));
 $('#logout').addEventListener('click',async()=>{
@@ -257,7 +389,21 @@ $('#aiBadge').addEventListener('click',async()=>{await refreshAI();openModal('И
 $('#menu').addEventListener('click',openSidebar);$('#closeSidebar').addEventListener('click',closeSidebar);
 $('#scrim').addEventListener('click',closeSidebar);$('#closeModal').addEventListener('click',()=>$('#modal').close());
 $('#searchChats').addEventListener('input',refreshChats);
-$('#attachText').addEventListener('click',()=>$('#localFile').click());
+
+$('#plusTools').addEventListener('click',()=>{
+ const visible=!$('#toolMenu').hidden;
+ $('#toolMenu').hidden=visible;
+ $('#plusTools').setAttribute('aria-expanded',String(!visible));
+});
+$('#plusBuilder').addEventListener('click',()=>{closeTools();builder()});
+$('#plusNotes').addEventListener('click',()=>{closeTools();notes().catch(e=>notice(e.message))});
+$('#plusExport').addEventListener('click',exportChat);
+$('#plusVoice').addEventListener('click',voiceToggle);
+$('#voiceToggle').addEventListener('click',voiceToggle);
+document.addEventListener('click',e=>{
+ if(!e.target.closest('#toolMenu')&&!e.target.closest('#plusTools'))closeTools();
+});
+$('#attachText').addEventListener('click',()=>{closeTools();$('#localFile').click()});
 $('#localFile').addEventListener('change',async e=>{
  const file=e.target.files?.[0];if(!file)return;
  if(file.size>120000){notice('Максимум 120 КБ текста для вставки в запрос.');return}
