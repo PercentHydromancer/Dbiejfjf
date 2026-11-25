@@ -78,8 +78,7 @@
     grid.append(card);
    }
    root.append(grid);
-   if(!status.payment.configured)
-    root.append(subtitle('Приём платежей пока не настроен. Администратор должен указать PAYMENT_RECEIVER и PAYMENT_CARD либо PAYMENT_PHONE в Render. Без этого платные кнопки отключены.'));
+
    root.append(btn('Мои заявки на оплату',showMyPayments,'billing-secondary'));
   }catch(e){root.append(txt('p',e.message,'billing-error'))}
  }
@@ -88,17 +87,19 @@
   const plan=current.plans[key],root=mountModal('Оплата тарифа '+plan.name);
   root.append(subtitle('Тариф '+plan.name+' · '+money(plan.price)+' за 30 дней. Оплата вручную: переведи точную сумму, затем загрузи фото чека. Деньги не списываются сайтом автоматически.'));
   const details=txt('div','','billing-details');
-  details.append(txt('strong','Получатель: '+current.payment.receiver));
+  details.append(txt('strong','Перевод напрямую в Т-Банк'));
+  if(current.payment.receiver)details.append(txt('p','Получатель: '+current.payment.receiver));
   if(current.payment.bank)details.append(txt('p','Банк: '+current.payment.bank));
   if(current.payment.card)details.append(txt('p','Карта: '+current.payment.card));
   if(current.payment.phone)details.append(txt('p','Телефон для перевода: '+current.payment.phone));
   root.append(details);
-  root.append(subtitle('После перевода выбери фото чека (JPEG, PNG или WebP до 1,3 МБ). Администратор сверит поступление платежа и примет или отклонит заявку.'));
+  root.append(subtitle('После перевода прикрепи чек ниже (JPEG, PNG или WebP до 1,3 МБ), затем нажми «Я оплатил». Администратор сверит поступление платежа и примет или отклонит заявку.'));
+  root.append(txt('strong','Прикрепить чек:'));
   const file=txt('input','');
   file.type='file';file.accept='image/jpeg,image/png,image/webp';
   file.className='billing-file';
   const err=txt('p','','billing-error');root.append(file,err);
-  const submit=btn('Я оплатил — отправить чек',async()=>{
+  const submit=btn('Я оплатил',async()=>{
    err.textContent='';
    const uploaded=file.files?.[0];
    if(!uploaded){err.textContent='Сначала выбери фото чека.';return}
