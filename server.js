@@ -2,8 +2,10 @@ import express from 'express';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import pg from 'pg';
 import { fileURLToPath } from 'node:url';
 const app=express();
+app.set('trust proxy',1);
 app.disable('x-powered-by');
 app.use(express.json({limit:'600kb'}));
 const root=path.dirname(fileURLToPath(import.meta.url));
@@ -12,23 +14,56 @@ const ollamaHosts=(process.env.OLLAMA_BASE_URLS||process.env.OLLAMA_BASE_URL||'h
 const localCompat=(process.env.LOCAL_OPENAI_BASE_URL||'').trim().replace(/\/+$/,'');
 const localCompatModel=(process.env.LOCAL_OPENAI_MODEL||'local-model').trim();
 
-const store={users:[],sessions:[],chats:[],notes:[]};
+const store={users:[],sessions:[],chats:[],notes:[],adminSessions:[]};
+const pool=process.env.DATABASE_URL?new pg.Pool({connectionString:process.env.DATABASE_URL}):null;
 const id=()=>crypto.randomUUID(),clock=()=>Date.now();
 const digest=s=>crypto.createHash('sha256').update(s).digest('hex');
 const fail=(res,n,msg)=>res.status(n).json({error:msg});
 let queued=Promise.resolve();
-async function persist(){queued=queued.catch(()=>{}).then(async()=>{await fs.mkdir(path.dirname(dbPath),{recursive:true});const tmp=dbPath+'.tmp';await fs.writeFile(tmp,JSON.stringify(store),{mode:0o600});await fs.rename(tmp,dbPath)});await queued}
-try{Object.assign(store,JSON.parse(await fs.readFile(dbPath,'utf8')))}catch(e){if(e.code!=='ENOENT')throw e}
-const cookie=(req)=>((req.headers.cookie||'').split(';').map(v=>v.trim()).find(v=>v.startsWith('session='))||'').slice(8);
-function userAuth(req,res,next){const s=store.sessions.find(s=>s.hash===digest(cookie(req))&&s.until>clock());const u=s&&store.users.find(u=>u.id===s.userId);if(!u)return fail(res,401,'Требуется вход в аккаунт');req.user=u;next()}
+async function initializeStore(){
+  let saved=null;
+  if(pool){
+    await pool.query('CREATE TABLE IF NOT EXISTS malik_store (id integer PRIMARY KEY, data jsonb NOT NULL)');
+    const record=await pool.query('SELECT data FROM malik_store WHERE id=1');
+    saved=record.rows[0]?.data||null;
+  }
+  if(!saved){
+    try{saved=JSON.parse(await fs.readFile(dbPath,'utf8'))}
+    catch(e){if(e.code!=='ENOENT')throw e}
+  }
+  if(saved&&typeof saved==='object'){
+    for(const key of Object.keys(store))if(Array.isArray(saved[key]))store[key]=saved[key];
+  }
+  if(pool)await persist();
+}
+async function persist(){
+  queued=queued.catch(e=>{console.error('Previous storage write failed:',e.message)}).then(async()=>{
+    const snapshot=JSON.stringify(store);
+    if(pool){
+      await pool.query('INSERT INTO malik_store(id,data) VALUES(1,$1::jsonb) ON CONFLICT (id) DO UPDATE SET data=EXCLUDED.data',[snapshot]);
+    }else{
+      await fs.mkdir(path.dirname(dbPath),{recursive:true});
+      const tmp=dbPath+'.'+process.pid+'.tmp';
+      await fs.writeFile(tmp,snapshot,{mode:0o600});
+      await fs.rename(tmp,dbPath);
+    }
+  });
+  return queued;
+}
+function cookieNamed(req,name){
+  const match=(req.headers.cookie||'').split(';').map(v=>v.trim()).find(v=>v.startsWith(name+'='));
+  return match?match.slice(name.length+1):'';
+}
+const cookie=req=>cookieNamed(req,'malik_session')||cookieNamed(req,'session');
+function userAuth(req,res,next){const s=store.sessions.find(s=>s.hash===digest(cookie(req))&&s.until>clock());const u=s&&store.users.find(u=>u.id===s.userId);if(!u)return fail(res,401,'Сессия недействительна или истекла. Войдите снова. Если это происходит после деплоя Render, настройте DATABASE_URL (PostgreSQL) или постоянный диск.');req.user=u;next()}
 const userView=u=>({id:u.id,name:u.name});
-function loginCookie(req,res,u){const token=crypto.randomBytes(32).toString('hex');store.sessions.push({hash:digest(token),userId:u.id,until:clock()+2592000000});res.cookie('session',token,{httpOnly:true,sameSite:'lax',secure:req.secure||req.headers['x-forwarded-proto']==='https',maxAge:2592000000})}
+function loginCookie(req,res,u){const token=crypto.randomBytes(32).toString('hex');store.sessions.push({hash:digest(token),userId:u.id,until:clock()+2592000000});res.cookie('malik_session',token,{httpOnly:true,sameSite:'lax',secure:req.secure||req.headers['x-forwarded-proto']==='https',path:'/',maxAge:2592000000})}
 function passwordHash(p,salt){return crypto.scryptSync(p,salt,64).toString('hex')}
 const access=new Map();
 function limit(req,res,next){const key=req.ip||'unknown',list=(access.get(key)||[]).filter(x=>x>clock()-600000);if(list.length>20)return fail(res,429,'Слишком много попыток. Попробуйте позже.');list.push(clock());access.set(key,list);if(access.size>5000)access.clear();next()}
 app.post('/api/register',limit,async(req,res,next)=>{try{const name=String(req.body.name||'').trim(),pass=String(req.body.password||'');if(name.length<3||name.length>40||pass.length<8||pass.length>128)return fail(res,400,'Имя от 3 символов, пароль от 8 символов');if(store.users.some(u=>u.name.toLowerCase()===name.toLowerCase()))return fail(res,409,'Имя уже занято');const salt=crypto.randomBytes(16).toString('hex'),u={id:id(),name,salt,hash:passwordHash(pass,salt)};store.users.push(u);loginCookie(req,res,u);await persist();res.json({user:userView(u)})}catch(e){next(e)}});
 app.post('/api/login',limit,async(req,res,next)=>{try{const name=String(req.body.name||'').trim(),pass=String(req.body.password||'');const u=store.users.find(u=>u.name.toLowerCase()===name.toLowerCase());if(!u||passwordHash(pass,u.salt)!==u.hash)return fail(res,401,'Неверные данные');loginCookie(req,res,u);await persist();res.json({user:userView(u)})}catch(e){next(e)}});
-app.post('/api/logout',userAuth,async(req,res,next)=>{try{store.sessions=store.sessions.filter(s=>s.hash!==digest(cookie(req)));res.clearCookie('session');await persist();res.json({ok:true})}catch(e){next(e)}});
+app.post('/api/logout',userAuth,async(req,res,next)=>{try{store.sessions=store.sessions.filter(s=>s.hash!==digest(cookie(req)));res.clearCookie('malik_session',{path:'/'});res.clearCookie('session',{path:'/'});await persist();res.json({ok:true})}catch(e){next(e)}});
 app.get('/api/me',userAuth,(req,res)=>res.json({user:userView(req.user)}));
 app.get('/api/health',(_req,res)=>res.json({ok:true,service:'Malik GPT'}));
 async function jsonFromLocal(url,options={},timeoutMs=9000){
@@ -122,4 +157,5 @@ app.delete('/api/notes/:id',userAuth,async(req,res,next)=>{try{store.notes=store
 app.use(express.static(path.join(root,'public')));
 app.use('/api',(_req,res)=>fail(res,404,'Маршрут не найден'));
 app.use((err,req,res,next)=>{console.error(err);fail(res,500,'Ошибка сервера')});
-app.listen(Number(process.env.PORT||3000),'0.0.0.0',()=>console.log('Malik GPT started'));
+await initializeStore();
+app.listen(Number(process.env.PORT||3000),'0.0.0.0',()=>console.log('Malik GPT started'+(pool?' with PostgreSQL':' with local file storage')));
