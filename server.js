@@ -65,8 +65,9 @@ function cookieNamed(req,name){
   return match?match.slice(name.length+1):'';
 }
 const cookie=req=>cookieNamed(req,'malik_session')||cookieNamed(req,'session');
-const SESSION_TTL=30*24*60*60*1000;
-const SESSION_RENEW_AFTER=15*24*60*60*1000;
+// Keep users signed in across browser restarts. Renew each active session monthly.
+const SESSION_TTL=365*24*60*60*1000;
+const SESSION_RENEW_AFTER=335*24*60*60*1000;
 function sessionCookie(req,res,token,maxAge=SESSION_TTL){
  res.cookie('malik_session',token,{httpOnly:true,sameSite:'lax',secure:req.secure||req.headers['x-forwarded-proto']==='https',path:'/',maxAge});
 }
