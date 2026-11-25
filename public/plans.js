@@ -174,7 +174,8 @@
   }catch(e){root.append(txt('p',e.message,'billing-error'))}
  }
  window.MalikBilling={open,refreshStatus,showAdminPayments};
- const openButton=get('openPlans'),pill=get('billingBadge');
+ const openButton=get('openPlans'),headerButton=get('headerPlans'),pill=get('billingBadge');
  openButton?.addEventListener('click',open);
+ headerButton?.addEventListener('click',open);
  pill?.addEventListener('click',open);
 })();
