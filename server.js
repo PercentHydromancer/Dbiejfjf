@@ -8,7 +8,10 @@ app.disable('x-powered-by');
 app.use(express.json({limit:'600kb'}));
 const root=path.dirname(fileURLToPath(import.meta.url));
 const dbPath=path.join(process.env.DATA_DIR||path.join(root,'data'),'store.json');
-const ollama=(process.env.OLLAMA_BASE_URL||'http://127.0.0.1:11434').replace(/\/+$/,'');
+const ollamaHosts=(process.env.OLLAMA_BASE_URLS||process.env.OLLAMA_BASE_URL||'http://127.0.0.1:11434').split(',').map(x=>x.trim().replace(/\/+$/,'')).filter(Boolean);
+const localCompat=(process.env.LOCAL_OPENAI_BASE_URL||'').trim().replace(/\/+$/,'');
+const localCompatModel=(process.env.LOCAL_OPENAI_MODEL||'local-model').trim();
+
 const store={users:[],sessions:[],chats:[],notes:[]};
 const id=()=>crypto.randomUUID(),clock=()=>Date.now();
 const digest=s=>crypto.createHash('sha256').update(s).digest('hex');
@@ -28,9 +31,45 @@ app.post('/api/login',limit,async(req,res,next)=>{try{const name=String(req.body
 app.post('/api/logout',userAuth,async(req,res,next)=>{try{store.sessions=store.sessions.filter(s=>s.hash!==digest(cookie(req)));res.clearCookie('session');await persist();res.json({ok:true})}catch(e){next(e)}});
 app.get('/api/me',userAuth,(req,res)=>res.json({user:userView(req.user)}));
 app.get('/api/health',(_req,res)=>res.json({ok:true,service:'Malik GPT'}));
-async function installed(){const ctrl=new AbortController(),timer=setTimeout(()=>ctrl.abort(),10000);try{const r=await fetch(ollama+'/api/tags',{signal:ctrl.signal});if(!r.ok)throw Error('Ollama '+r.status);const data=await r.json();return (data.models||[]).map(m=>m.name).filter(Boolean)}finally{clearTimeout(timer)}}
-function modelOrder(models){const preferred=(process.env.OLLAMA_MODELS||'').split(',').map(s=>s.trim()).filter(Boolean);return [...new Set([...preferred.filter(m=>models.includes(m)),...models])]}
-app.get('/api/ai-status',userAuth,async(req,res)=>{try{const names=modelOrder(await installed());res.json({ready:names.length>0,models:names,message:names.length?'Локальные модели доступны':'Модели не установлены. Выполните ollama pull qwen2.5:3b'})}catch{res.json({ready:false,models:[],message:'Ollama не запущена на сервере. См. README.'})}});
+async function jsonFromLocal(url,options={},timeoutMs=9000){
+ const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),timeoutMs);
+ try{const r=await fetch(url,{...options,signal:controller.signal});
+   if(!r.ok)throw Error('HTTP '+r.status);
+   return await r.json();
+ }finally{clearTimeout(timer)}
+}
+async function localSources(){
+ const sources=[];
+ for(const base of ollamaHosts){
+   try{
+     const data=await jsonFromLocal(base+'/api/tags');
+     const available=(data.models||[]).map(m=>m.name).filter(Boolean);
+     const preferred=(process.env.OLLAMA_MODELS||'').split(',').map(m=>m.trim()).filter(Boolean);
+     const ordered=[...new Set([...preferred.filter(m=>available.includes(m)),...available])];
+     for(const model of ordered)sources.push({type:'ollama',base,model});
+   }catch{}
+ }
+ if(localCompat){
+   try{
+     const data=await jsonFromLocal(localCompat+'/models');
+     const found=(data.data||[]).map(m=>m.id).filter(Boolean);
+     const selected=found.includes(localCompatModel)?localCompatModel:(found[0]||localCompatModel);
+     sources.push({type:'openai-local',base:localCompat,model:selected});
+   }catch{
+     // Some llama.cpp compatible servers do not provide GET /models.
+     // Keep the explicitly configured source; generation will verify it.
+     sources.push({type:'openai-local',base:localCompat,model:localCompatModel});
+   }
+ }
+ return sources;
+}
+app.get('/api/ai-status',userAuth,async(_req,res)=>{
+ const sources=await localSources();
+ const models=sources.map(s=>(s.type==='ollama'?'Ollama: ':'Локальный сервер: ')+s.model);
+ res.json({ready:sources.length>0,models,message:sources.length?
+   'Доступно локальных моделей: '+sources.length+'. Внешние API-ключи не нужны.':
+   'Нет доступных моделей. Запустите Ollama и скачайте модели или настройте локальный llama.cpp сервер.'});
+});
 app.get('/api/chats',userAuth,(req,res)=>res.json({chats:store.chats.filter(c=>c.userId===req.user.id).sort((a,b)=>b.updated-a.updated).map(({id,title,updated})=>({id,title,updated}))}));
 app.post('/api/chats',userAuth,async(req,res,next)=>{try{const c={id:id(),userId:req.user.id,title:'Новый чат',updated:clock(),messages:[]};store.chats.push(c);await persist();res.json({chat:c})}catch(e){next(e)}});
 function owned(req,res){const c=store.chats.find(c=>c.id===req.params.id&&c.userId===req.user.id);if(!c)fail(res,404,'Чат не найден');return c}
@@ -38,7 +77,45 @@ app.get('/api/chats/:id',userAuth,(req,res)=>{const c=owned(req,res);if(c)res.js
 app.patch('/api/chats/:id',userAuth,async(req,res,next)=>{try{const c=owned(req,res);if(!c)return;const title=String(req.body.title||'').trim().slice(0,80);if(!title)return fail(res,400,'Введите название');c.title=title;await persist();res.json({chat:c})}catch(e){next(e)}});
 app.delete('/api/chats/:id',userAuth,async(req,res,next)=>{try{const c=owned(req,res);if(!c)return;store.chats=store.chats.filter(x=>x.id!==c.id);await persist();res.json({ok:true})}catch(e){next(e)}});
 app.post('/api/chats/:id/messages',userAuth,async(req,res,next)=>{try{const c=owned(req,res);if(!c)return;const text=String(req.body.text||'').trim();if(!text||text.length>12000)return fail(res,400,'Сообщение должно быть от 1 до 12 000 символов');const m={id:id(),role:'user',content:text,mode:req.body.mode==='code'?'code':'chat',at:clock()};c.messages.push(m);c.messages=c.messages.slice(-120);if(c.title==='Новый чат')c.title=text.slice(0,54);c.updated=clock();await persist();res.json({message:m})}catch(e){next(e)}});
-app.post('/api/chats/:id/reply',userAuth,async(req,res,next)=>{try{const c=owned(req,res);if(!c)return;const last=[...c.messages].reverse().find(m=>m.role==='user');if(!last)return fail(res,400,'Сначала отправьте сообщение');const previous=c.messages.find(m=>m.replyTo===last.id);if(previous)return res.json({message:previous});let models;try{models=modelOrder(await installed())}catch{return fail(res,503,'Локальный ИИ не запущен. Установите Ollama на сервере. Сообщение сохранено.')}if(!models.length)return fail(res,503,'Нет моделей. Выполните: ollama pull qwen2.5:3b');const sys=last.mode==='code'?'Ты Malik GPT, помощник по коду. Отвечай по-русски. Для создания файлов пиши полный код в Markdown блоках с именем файла, например html filename=index.html, css filename=style.css, js filename=script.js. Не обещай создать файл, если не вернул исходник.':'Ты Malik GPT. Отвечай на русском, помогай пользователю, не выдумывай действия и инструменты.';let reason='Нет доступного ответа';for(const model of models){const ctrl=new AbortController(),timer=setTimeout(()=>ctrl.abort(),120000);try{const r=await fetch(ollama+'/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},signal:ctrl.signal,body:JSON.stringify({model,stream:false,messages:[{role:'system',content:sys},...c.messages.slice(-20).map(m=>({role:m.role,content:m.content}))],options:{num_predict:last.mode==='code'?2400:1200}})});if(!r.ok){reason=model+': HTTP '+r.status;continue}const data=await r.json(),answer=String(data.message?.content||'').trim();if(!answer){reason=model+' вернула пустой ответ';continue}const message={id:id(),role:'assistant',content:answer.slice(0,110000),replyTo:last.id,model,at:clock()};c.messages.push(message);c.updated=clock();await persist();return res.json({message})}catch(e){reason=model+': '+(e.name==='AbortError'?'таймаут модели':'ошибка соединения')}finally{clearTimeout(timer)}}return fail(res,503,'Все локальные модели недоступны: '+reason+'. Сообщение сохранено.')}catch(e){next(e)}});
+app.post('/api/chats/:id/reply',userAuth,async(req,res,next)=>{
+ try{
+  const c=owned(req,res);if(!c)return;
+  const last=[...c.messages].reverse().find(m=>m.role==='user');
+  if(!last)return fail(res,400,'Сначала отправьте сообщение');
+  const previous=c.messages.find(m=>m.replyTo===last.id);
+  if(previous)return res.json({message:previous});
+  const sources=await localSources();
+  if(!sources.length)return fail(res,503,'Локальный ИИ не запущен. Установите Ollama и скачайте модели. Сообщение сохранено.');
+  const sys=last.mode==='code'
+   ?'Ты Malik GPT, помощник по программированию. Отвечай по-русски. Если просят файлы, предоставляй ПОЛНЫЙ код каждого файла в отдельных Markdown блоках с именем: html filename=index.html, css filename=style.css, js filename=script.js. Не утверждай, что создал файлы на устройстве, если не создавал.'
+   :'Ты Malik GPT, полезный русскоязычный помощник. Не выдумывай действия или инструменты.';
+  const messages=[{role:'system',content:sys},...c.messages.slice(-20).map(m=>({role:m.role,content:m.content}))];
+  let reason='Модели не ответили';
+  for(const source of sources){
+   const ctrl=new AbortController(),timer=setTimeout(()=>ctrl.abort(),60000);
+   const modelLabel=(source.type==='ollama'?'Ollama: ':'Локальный сервер: ')+source.model;
+   try{
+    const endpoint=source.type==='ollama'?source.base+'/api/chat':source.base+'/chat/completions';
+    const body=source.type==='ollama'
+      ?{model:source.model,stream:false,messages,options:{num_predict:last.mode==='code'?2400:1400}}
+      :{model:source.model,stream:false,messages,max_tokens:last.mode==='code'?2400:1400};
+    const response=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},
+      signal:ctrl.signal,body:JSON.stringify(body)});
+    if(!response.ok){reason=modelLabel+' ответил HTTP '+response.status;await response.body?.cancel().catch(()=>{});continue}
+    const result=await response.json();
+    const content=source.type==='ollama'?result.message?.content:result.choices?.[0]?.message?.content;
+    const answer=String(content||'').trim();
+    if(!answer){reason=modelLabel+' вернул пустой ответ';continue}
+    const message={id:id(),role:'assistant',content:answer.slice(0,110000),replyTo:last.id,model:modelLabel,at:clock()};
+    c.messages.push(message);c.updated=clock();await persist();
+    return res.json({message});
+   }catch(e){reason=modelLabel+': '+(e.name==='AbortError'?'превышено время ответа':'ошибка связи');}
+   finally{clearTimeout(timer)}
+  }
+  return fail(res,503,'Все локальные модели недоступны. '+reason+'. Вопрос сохранён.');
+ }catch(e){next(e)}
+});
+
 app.get('/api/notes',userAuth,(req,res)=>res.json({notes:store.notes.filter(n=>n.userId===req.user.id)}));
 app.post('/api/notes',userAuth,async(req,res,next)=>{try{const title=String(req.body.title||'Заметка').slice(0,90),content=String(req.body.content||'').slice(0,30000);if(!content.trim())return fail(res,400,'Заметка пуста');const note={id:id(),userId:req.user.id,title,content,at:clock()};store.notes.push(note);await persist();res.json({note})}catch(e){next(e)}});
 app.delete('/api/notes/:id',userAuth,async(req,res,next)=>{try{store.notes=store.notes.filter(n=>!(n.id===req.params.id&&n.userId===req.user.id));await persist();res.json({ok:true})}catch(e){next(e)}});
