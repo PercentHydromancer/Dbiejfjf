@@ -56,10 +56,12 @@ export function installBilling({app,store,persist,userAuth,adminAuth,fail}){
   return {plan:grant.key,name:plan.name,kind:grant.kind,expiresAt:grant.expiresAt,
    limits:{messages:plan.messages,files:plan.files},used,plans:limits(),
    payment:{
-    configured:Boolean((process.env.PAYMENT_CARD||process.env.PAYMENT_PHONE)&&process.env.PAYMENT_RECEIVER),
-    card:process.env.PAYMENT_CARD||null,phone:process.env.PAYMENT_PHONE||null,
+    configured:true,
+    // Public payment destination requested by the shop owner. Render env overrides these defaults.
+    card:process.env.PAYMENT_CARD||'2200701215592723',
+    phone:process.env.PAYMENT_PHONE||'+7 938 024 76 77',
     receiver:process.env.PAYMENT_RECEIVER||null,
-    bank:process.env.PAYMENT_BANK||null
+    bank:process.env.PAYMENT_BANK||'Т-Банк'
    }};
  }
  // Record successful sends separately so deleting a chat never resets the daily allowance.
@@ -105,8 +107,6 @@ export function installBilling({app,store,persist,userAuth,adminAuth,fail}){
  app.post('/api/billing/requests',userAuth,async(req,res,next)=>{
   try{
    const info=billStatus(req.user);
-   if(!info.payment.configured)
-    return fail(res,503,'Приём оплаты не настроен. Администратор должен добавить PAYMENT_RECEIVER и PAYMENT_CARD или PAYMENT_PHONE в Render.');
    const plan=String(req.body.plan||'').toLowerCase();
    if(!paidPlans.includes(plan))return fail(res,400,'Неизвестный платный тариф.');
    const mime=String(req.body.mime||'').toLowerCase();
