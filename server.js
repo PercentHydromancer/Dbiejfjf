@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 const app=express();
 app.set('trust proxy',1);
 app.disable('x-powered-by');
-app.use(express.json({limit:'600kb'}));
+app.use(express.json({limit:'3mb'}));
 const root=path.dirname(fileURLToPath(import.meta.url));
 const dbPath=path.join(process.env.DATA_DIR||path.join(root,'data'),'store.json');
 const ollamaHosts=(process.env.OLLAMA_BASE_URLS||process.env.OLLAMA_BASE_URL||'http://127.0.0.1:11434').split(',').map(x=>x.trim().replace(/\/+$/,'')).filter(Boolean);
@@ -24,6 +24,7 @@ async function initializeStore(){
   let saved=null;
   if(pool){
     await pool.query('CREATE TABLE IF NOT EXISTS malik_store (id integer PRIMARY KEY, data jsonb NOT NULL)');
+    await pool.query('CREATE TABLE IF NOT EXISTS malik_audio (id uuid PRIMARY KEY, user_id uuid NOT NULL, chat_id uuid NOT NULL, mime text NOT NULL, audio bytea NOT NULL)');
     const record=await pool.query('SELECT data FROM malik_store WHERE id=1');
     saved=record.rows[0]?.data||null;
   }
@@ -192,6 +193,69 @@ app.post('/api/chats/:id/reply',userAuth,async(req,res,next)=>{
    finally{clearTimeout(timer)}
   }
   return fail(res,503,'Все локальные модели недоступны. '+reason+'. Вопрос сохранён.');
+ }catch(e){next(e)}
+});
+
+
+// Voice notes are real recorded audio, not invented speech-to-text.
+const audioTypes={ 'audio/webm':'webm','audio/mp4':'m4a','audio/ogg':'ogg','audio/wav':'wav','audio/mpeg':'mp3' };
+const voiceThrottle=new Map();
+function voiceRateLimit(req,res,next){
+ const key=req.user.id,used=(voiceThrottle.get(key)||[]).filter(t=>t>clock()-3600000);
+ if(used.length>=30)return fail(res,429,'Лимит: 30 голосовых сообщений в час.');
+ used.push(clock());voiceThrottle.set(key,used);
+ if(voiceThrottle.size>5000)voiceThrottle.clear();
+ next();
+}
+app.post('/api/chats/:id/voice',userAuth,voiceRateLimit,async(req,res,next)=>{
+ try{
+  const chat=owned(req,res);if(!chat)return;
+  const mime=String(req.body.mime||'').split(';')[0].toLowerCase();
+  const base64=String(req.body.base64||'');
+  const seconds=Number(req.body.duration);
+  if(!audioTypes[mime]||!Number.isFinite(seconds)||seconds<0||seconds>95)
+    return fail(res,400,'Неподдерживаемая запись или слишком большая длительность.');
+  if(!base64||base64.length>2.8*1024*1024||!(/^[A-Za-z0-9+/]+={0,2}$/).test(base64))
+    return fail(res,400,'Голосовое сообщение должно быть короче 90 секунд и до 2 МБ.');
+  const audio=Buffer.from(base64,'base64');
+  if(!audio.length||audio.length>2*1024*1024)return fail(res,400,'Аудио превышает 2 МБ.');
+  // Check basic container signatures, not just user-provided MIME.
+  const valid=mime==='audio/webm'?audio.subarray(0,4).equals(Buffer.from([0x1a,0x45,0xdf,0xa3])):
+    mime==='audio/ogg'?audio.toString('ascii',0,4)==='OggS':
+    mime==='audio/wav'?audio.toString('ascii',0,4)==='RIFF':
+    mime==='audio/mpeg'?(audio[0]===0xff||(audio.toString('ascii',0,3)==='ID3')):
+    audio.toString('ascii',4,8)==='ftyp';
+  if(!valid)return fail(res,400,'Не удалось проверить формат аудиозаписи.');
+  const voiceId=id();
+  if(pool){
+    await pool.query('INSERT INTO malik_audio(id,user_id,chat_id,mime,audio) VALUES($1,$2,$3,$4,$5)',[voiceId,req.user.id,chat.id,mime,audio]);
+  }else{
+    const dir=path.join(path.dirname(dbPath),'audio');
+    await fs.mkdir(dir,{recursive:true});
+    await fs.writeFile(path.join(dir,voiceId+'.'+audioTypes[mime]),audio,{flag:'wx',mode:0o600});
+  }
+  const m={id:id(),role:'user',content:'🎤 Голосовое сообщение',mode:'chat',voice:{id:voiceId,mime,duration:Math.round(seconds)},at:clock()};
+  chat.messages.push(m);chat.messages=chat.messages.slice(-120);
+  if(chat.title==='Новый чат')chat.title='Голосовое сообщение';
+  chat.updated=clock();await persist();
+  res.status(201).json({message:m});
+ }catch(e){next(e)}
+});
+app.get('/api/chats/:id/audio/:voiceId',userAuth,async(req,res,next)=>{
+ try{
+  const chat=owned(req,res);if(!chat)return;
+  const voice=chat.messages.find(m=>m.voice?.id===req.params.voiceId)?.voice;
+  if(!voice)return fail(res,404,'Голосовое сообщение не найдено.');
+  let buffer;
+  if(pool){
+    const record=await pool.query('SELECT audio FROM malik_audio WHERE id=$1 AND user_id=$2 AND chat_id=$3',[voice.id,req.user.id,chat.id]);
+    buffer=record.rows[0]?.audio;
+  }else{
+    try{buffer=await fs.readFile(path.join(path.dirname(dbPath),'audio',voice.id+'.'+audioTypes[voice.mime]));}
+    catch(e){if(e.code!=='ENOENT')throw e}
+  }
+  if(!buffer)return fail(res,404,'Файл аудио недоступен. На Render нужен постоянный диск либо DATABASE_URL.');
+  res.set('Cache-Control','private, no-store');res.type(voice.mime);res.send(buffer);
  }catch(e){next(e)}
 });
 
