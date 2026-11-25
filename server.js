@@ -16,7 +16,15 @@ const localCompat=(process.env.LOCAL_OPENAI_BASE_URL||'').trim().replace(/\/+$/,
 const localCompatModel=(process.env.LOCAL_OPENAI_MODEL||'local-model').trim();
 
 const store={users:[],sessions:[],chats:[],notes:[],adminSessions:[]};
-const pool=process.env.DATABASE_URL?new pg.Pool({connectionString:process.env.DATABASE_URL}):null;
+// External PostgreSQL hosts (including Render's external URL) require TLS.
+// Internal Render hosts can use the private network connection without TLS.
+const databaseUrl=process.env.DATABASE_URL;
+const dbHost=databaseUrl?new URL(databaseUrl).hostname.toLowerCase():'';
+const dbInternal=dbHost.endsWith('.internal')||dbHost==='localhost'||dbHost==='127.0.0.1';
+const pool=databaseUrl?new pg.Pool({
+ connectionString:databaseUrl,
+ ...(!dbInternal?{ssl:{rejectUnauthorized:true}}:{})
+}):null;
 const id=()=>crypto.randomUUID(),clock=()=>Date.now();
 const digest=s=>crypto.createHash('sha256').update(s).digest('hex');
 const fail=(res,n,msg)=>res.status(n).json({error:msg});
