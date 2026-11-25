@@ -31,7 +31,7 @@ app.get('/api/health',(_req,res)=>res.json({ok:true,service:'Malik GPT'}));
 async function installed(){const ctrl=new AbortController(),timer=setTimeout(()=>ctrl.abort(),10000);try{const r=await fetch(ollama+'/api/tags',{signal:ctrl.signal});if(!r.ok)throw Error('Ollama '+r.status);const data=await r.json();return (data.models||[]).map(m=>m.name).filter(Boolean)}finally{clearTimeout(timer)}}
 function modelOrder(models){const preferred=(process.env.OLLAMA_MODELS||'').split(',').map(s=>s.trim()).filter(Boolean);return [...new Set([...preferred.filter(m=>models.includes(m)),...models])]}
 app.get('/api/ai-status',userAuth,async(req,res)=>{try{const names=modelOrder(await installed());res.json({ready:names.length>0,models:names,message:names.length?'Локальные модели доступны':'Модели не установлены. Выполните ollama pull qwen2.5:3b'})}catch{res.json({ready:false,models:[],message:'Ollama не запущена на сервере. См. README.'})}});
-app.get('/api/chats',userAuth,(req,res)=>res.json({chats:store.chats.filter(c=>c.userId===req.user.id).sort((a,b)=>b.updated-b.updated).map(({id,title,updated})=>({id,title,updated}))}));
+app.get('/api/chats',userAuth,(req,res)=>res.json({chats:store.chats.filter(c=>c.userId===req.user.id).sort((a,b)=>b.updated-a.updated).map(({id,title,updated})=>({id,title,updated}))}));
 app.post('/api/chats',userAuth,async(req,res,next)=>{try{const c={id:id(),userId:req.user.id,title:'Новый чат',updated:clock(),messages:[]};store.chats.push(c);await persist();res.json({chat:c})}catch(e){next(e)}});
 function owned(req,res){const c=store.chats.find(c=>c.id===req.params.id&&c.userId===req.user.id);if(!c)fail(res,404,'Чат не найден');return c}
 app.get('/api/chats/:id',userAuth,(req,res)=>{const c=owned(req,res);if(c)res.json({chat:c})});
