@@ -65,16 +65,43 @@ function cookieNamed(req,name){
   return match?match.slice(name.length+1):'';
 }
 const cookie=req=>cookieNamed(req,'malik_session')||cookieNamed(req,'session');
-function userAuth(req,res,next){const s=store.sessions.find(s=>s.hash===digest(cookie(req))&&s.until>clock());const u=s&&store.users.find(u=>u.id===s.userId);if(!u)return fail(res,401,'Сессия недействительна или истекла. Войдите снова. Если это происходит после деплоя Render, настройте DATABASE_URL (PostgreSQL) или постоянный диск.');req.user=u;next()}
+const SESSION_TTL=30*24*60*60*1000;
+const SESSION_RENEW_AFTER=15*24*60*60*1000;
+function sessionCookie(req,res,token,maxAge=SESSION_TTL){
+ res.cookie('malik_session',token,{httpOnly:true,sameSite:'lax',secure:req.secure||req.headers['x-forwarded-proto']==='https',path:'/',maxAge});
+}
+function userAuth(req,res,next){
+ const token=cookie(req);
+ if(!token)return fail(res,401,'Требуется вход в аккаунт.');
+ const session=store.sessions.find(s=>s.hash===digest(token)&&s.until>clock());
+ const user=session&&store.users.find(u=>u.id===session.userId);
+ if(!user)return fail(res,401,'Сессия недействительна или истекла. Если вход пропадает после деплоя Render, настройте постоянную базу DATABASE_URL (PostgreSQL).');
+ req.user=user;req.session=session;req.sessionToken=token;next();
+}
 const userView=u=>({id:u.id,name:u.name});
-function loginCookie(req,res,u){const token=crypto.randomBytes(32).toString('hex');store.sessions.push({hash:digest(token),userId:u.id,until:clock()+2592000000});res.cookie('malik_session',token,{httpOnly:true,sameSite:'lax',secure:req.secure||req.headers['x-forwarded-proto']==='https',path:'/',maxAge:2592000000})}
+function loginCookie(req,res,u){
+ const token=crypto.randomBytes(32).toString('hex');
+ store.sessions=store.sessions.filter(s=>s.until>clock());
+ store.sessions.push({hash:digest(token),userId:u.id,until:clock()+SESSION_TTL});
+ sessionCookie(req,res,token);
+}
 function passwordHash(p,salt){return crypto.scryptSync(p,salt,64).toString('hex')}
 const access=new Map();
 function limit(req,res,next){const key=req.ip||'unknown',list=(access.get(key)||[]).filter(x=>x>clock()-600000);if(list.length>20)return fail(res,429,'Слишком много попыток. Попробуйте позже.');list.push(clock());access.set(key,list);if(access.size>5000)access.clear();next()}
 app.post('/api/register',limit,async(req,res,next)=>{try{const name=String(req.body.name||'').trim(),pass=String(req.body.password||'');if(name.length<3||name.length>40||pass.length<8||pass.length>128)return fail(res,400,'Имя от 3 символов, пароль от 8 символов');if(store.users.some(u=>u.name.toLowerCase()===name.toLowerCase()))return fail(res,409,'Имя уже занято');const salt=crypto.randomBytes(16).toString('hex'),u={id:id(),name,salt,hash:passwordHash(pass,salt),createdAt:Date.now()};store.users.push(u);loginCookie(req,res,u);await persist();res.json({user:userView(u)})}catch(e){next(e)}});
 app.post('/api/login',limit,async(req,res,next)=>{try{const name=String(req.body.name||'').trim(),pass=String(req.body.password||'');const u=store.users.find(u=>u.name.toLowerCase()===name.toLowerCase());if(!u||passwordHash(pass,u.salt)!==u.hash)return fail(res,401,'Неверные данные');loginCookie(req,res,u);await persist();res.json({user:userView(u)})}catch(e){next(e)}});
 app.post('/api/logout',userAuth,async(req,res,next)=>{try{store.sessions=store.sessions.filter(s=>s.hash!==digest(cookie(req)));res.clearCookie('malik_session',{path:'/'});res.clearCookie('session',{path:'/'});await persist();res.json({ok:true})}catch(e){next(e)}});
-app.get('/api/me',userAuth,(req,res)=>res.json({user:userView(req.user)}));
+// Restore the account silently on reload; renew active sessions before expiry.
+app.get('/api/me',userAuth,async(req,res,next)=>{
+ try{
+  if(req.session.until-clock()<SESSION_RENEW_AFTER){
+   req.session.until=clock()+SESSION_TTL;
+   sessionCookie(req,res,req.sessionToken);
+   await persist();
+  }
+  res.json({user:userView(req.user)});
+ }catch(e){next(e)}
+});
 app.get('/api/health',(_req,res)=>res.json({ok:true,service:'Malik GPT',storage:pool?'PostgreSQL':'local-file'}));
 
 // Separate administrator session. No credentials or secret default is committed.
