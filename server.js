@@ -66,6 +66,50 @@ app.post('/api/login',limit,async(req,res,next)=>{try{const name=String(req.body
 app.post('/api/logout',userAuth,async(req,res,next)=>{try{store.sessions=store.sessions.filter(s=>s.hash!==digest(cookie(req)));res.clearCookie('malik_session',{path:'/'});res.clearCookie('session',{path:'/'});await persist();res.json({ok:true})}catch(e){next(e)}});
 app.get('/api/me',userAuth,(req,res)=>res.json({user:userView(req.user)}));
 app.get('/api/health',(_req,res)=>res.json({ok:true,service:'Malik GPT'}));
+
+// Separate administrator session. No credentials or secret default is committed.
+const adminConfigured=()=>Boolean(process.env.ADMIN_LOGIN&&process.env.ADMIN_PASSWORD&&process.env.ADMIN_PASSWORD.length>=12);
+function secureEqual(a,b){
+ const ah=crypto.createHash('sha256').update(String(a)).digest();
+ const bh=crypto.createHash('sha256').update(String(b)).digest();
+ return crypto.timingSafeEqual(ah,bh);
+}
+function adminAuth(req,res,next){
+ if(!adminConfigured())return fail(res,503,'Админка не настроена. Установите ADMIN_LOGIN и ADMIN_PASSWORD (от 12 символов) в Render → Environment.');
+ const token=cookieNamed(req,'malik_admin');
+ const session=token&&store.adminSessions.find(x=>x.hash===digest(token)&&x.until>clock());
+ if(!session)return fail(res,401,'Войдите в админку.');
+ next();
+}
+app.get('/api/admin/status',(_req,res)=>res.json({configured:adminConfigured()}));
+app.post('/api/admin/login',limit,async(req,res,next)=>{
+ try{
+  if(!adminConfigured())return fail(res,503,'Для входа администратора укажите ADMIN_LOGIN и ADMIN_PASSWORD (минимум 12 символов) в настройках Render.');
+  const login=String(req.body.login||'').trim(),pass=String(req.body.password||'');
+  if(!secureEqual(login,process.env.ADMIN_LOGIN)||!secureEqual(pass,process.env.ADMIN_PASSWORD))
+    return fail(res,401,'Неверный логин или пароль администратора.');
+  const token=crypto.randomBytes(32).toString('hex');
+  store.adminSessions.push({hash:digest(token),until:clock()+8*3600000});
+  store.adminSessions=store.adminSessions.filter(x=>x.until>clock()).slice(-100);
+  res.cookie('malik_admin',token,{httpOnly:true,sameSite:'lax',secure:req.secure||req.headers['x-forwarded-proto']==='https',path:'/',maxAge:8*3600000});
+  await persist();res.json({ok:true});
+ }catch(e){next(e)}
+});
+app.get('/api/admin/overview',adminAuth,(_req,res)=>{
+ const users=store.users.map(u=>({
+  id:u.id,name:u.name,
+  chats:store.chats.filter(c=>c.userId===u.id).length,
+  notes:store.notes.filter(n=>n.userId===u.id).length
+ }));
+ const messages=store.chats.reduce((sum,c)=>sum+c.messages.length,0);
+ res.json({users:users.length,chats:store.chats.length,notes:store.notes.length,messages,recentUsers:users.slice(-40).reverse()});
+});
+app.post('/api/admin/logout',adminAuth,async(req,res,next)=>{
+ try{store.adminSessions=store.adminSessions.filter(x=>x.hash!==digest(cookieNamed(req,'malik_admin')));
+  res.clearCookie('malik_admin',{path:'/'});await persist();res.json({ok:true});
+ }catch(e){next(e)}
+});
+
 async function jsonFromLocal(url,options={},timeoutMs=9000){
  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),timeoutMs);
  try{const r=await fetch(url,{...options,signal:controller.signal});
