@@ -134,3 +134,29 @@ html,body{background:#ffffff}
 .header-plans{border:1px solid #ddd;background:#f6f6f6;color:#222;border-radius:999px;padding:7px 12px;font-weight:650;font-size:12px;white-space:nowrap;cursor:pointer}
 .header-plans:hover{background:#ececec;border-color:#bbb}
 @media(max-width:750px){.top-left{gap:5px}.top-left strong{font-size:15px}.header-plans{font-size:11px;padding:6px 8px}.topbar .status{max-width:28%}.billing-badge{max-width:26%;overflow:hidden;text-overflow:ellipsis}}
+
+/* Accessibility and light ChatGPT-inspired UI: consistent contrast across all views. */
+body{font-size:16px;color:#181818}
+.sidebar,.sidebar-footer{color:#202124}
+.side-main,.chat-name,.chat-options,.user-badge{color:#202124}
+.side-main:hover,.chat-entry:hover,.chat-entry.active{background:#eaeaea}
+.side-caption{color:#555}
+.search{background:#fff;color:#171717;border-color:#c9c9c9}
+.search::placeholder{color:#666}
+.welcome p,.muted,.message-label,.disclaimer,.billing-muted{color:#565656}
+.welcome p{font-size:15px}
+.message,.message-bubble{font-size:16px}
+.message.assistant .message-bubble{line-height:1.7;color:#181818}
+.message.user .message-bubble{background:#f0f0f0;color:#181818}
+.message-label{font-size:13px}
+.composer{background:#f5f5f5;border-color:#d5d5d5}
+.composer textarea{color:#191919;font-size:16px}
+.composer textarea::placeholder{color:#666}
+.composer select{color:#202020;border-color:#ccc}
+.auth-form input{color:#181818;background:#fff;border-color:#c9c9c9}
+.auth-form label,.auth-panel p{color:#4b4b4b}
+.modal,.modal p,.modal label{color:#202020}
+.modal input,.modal textarea{color:#181818;background:#fff;border-color:#ccc}
+.billing-card p,.billing-details p,.billing-payment-row p{color:#303030;font-size:14px}
+.billing-badge,.header-plans{color:#171717;background:#f5f5f5;border-color:#ccc}
+@media(max-width:750px){.topbar{padding:0 9px}.messages{padding-inline:14px}.composer-region{padding-inline:9px}.sidebar{background:#f8f8f8}}
