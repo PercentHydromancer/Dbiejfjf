@@ -114,6 +114,15 @@ function render(m){
  if(m.role==='assistant'){
   const actions=document.createElement('div');actions.className='message-actions';
   actions.append(button('⧉ Копировать',()=>navigator.clipboard.writeText(m.content).then(()=>notice('Ответ скопирован')).catch(()=>notice('Не удалось скопировать')),'mini-btn'));
+  if('speechSynthesis' in window && 'SpeechSynthesisUtterance' in window){
+   actions.append(button('🔊 Озвучить',()=>{
+    const speaker=window.speechSynthesis;
+    if(speaker.speaking){speaker.cancel();return}
+    const utterance=new window.SpeechSynthesisUtterance(String(m.content).slice(0,3500));
+    utterance.lang='ru-RU';utterance.rate=1;
+    speaker.speak(utterance);
+   },'mini-btn'));
+  }
   row.append(actions);
  }
  $('#messages').append(row);scrollMessages();
@@ -400,6 +409,32 @@ $('#plusBuilder').addEventListener('click',()=>{closeTools();builder()});
 $('#plusNotes').addEventListener('click',()=>{closeTools();notes().catch(e=>notice(e.message))});
 $('#plusExport').addEventListener('click',exportChat);
 $('#plusVoice').addEventListener('click',voiceToggle);
+
+function startDictation(){
+ closeTools();
+ const Recognition=window.SpeechRecognition||window.webkitSpeechRecognition;
+ if(!Recognition)return notice('Голосовой ввод недоступен в этом браузере.');
+ if(recorder?.state==='recording')return notice('Заверши запись голосового сообщения.');
+ try{
+  const recognition=new Recognition();
+  recognition.lang='ru-RU';recognition.interimResults=true;recognition.continuous=false;
+  const original=$('#prompt').value.trim(),prefix=original?original+' ':'';
+  recognition.onresult=e=>{
+   let transcript='';
+   for(let i=0;i<e.results.length;i++)transcript+=e.results[i][0].transcript;
+   $('#prompt').value=prefix+transcript.trim();
+   $('#prompt').dispatchEvent(new Event('input'));
+  };
+  recognition.onerror=e=>{notice('Не удалось распознать речь: '+e.error)};
+  recognition.onend=()=>{if(!recorder||recorder.state!=='recording')$('#recordStatus').hidden=true};
+  $('#recordStatus').hidden=false;
+  $('#recordStatus').textContent='Слушаю… говори. Распознанный текст появится в поле сообщения.';
+  recognition.start();
+ }catch(e){$('#recordStatus').hidden=true;notice('Не удалось запустить голосовой ввод: '+e.message)}
+}
+if(window.SpeechRecognition||window.webkitSpeechRecognition)$('#plusDictate').hidden=false;
+$('#plusDictate').addEventListener('click',startDictation);
+
 $('#voiceToggle').addEventListener('click',voiceToggle);
 document.addEventListener('click',e=>{
  if(!e.target.closest('#toolMenu')&&!e.target.closest('#plusTools'))closeTools();
