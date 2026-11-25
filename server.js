@@ -66,7 +66,7 @@ app.post('/api/register',limit,async(req,res,next)=>{try{const name=String(req.b
 app.post('/api/login',limit,async(req,res,next)=>{try{const name=String(req.body.name||'').trim(),pass=String(req.body.password||'');const u=store.users.find(u=>u.name.toLowerCase()===name.toLowerCase());if(!u||passwordHash(pass,u.salt)!==u.hash)return fail(res,401,'Неверные данные');loginCookie(req,res,u);await persist();res.json({user:userView(u)})}catch(e){next(e)}});
 app.post('/api/logout',userAuth,async(req,res,next)=>{try{store.sessions=store.sessions.filter(s=>s.hash!==digest(cookie(req)));res.clearCookie('malik_session',{path:'/'});res.clearCookie('session',{path:'/'});await persist();res.json({ok:true})}catch(e){next(e)}});
 app.get('/api/me',userAuth,(req,res)=>res.json({user:userView(req.user)}));
-app.get('/api/health',(_req,res)=>res.json({ok:true,service:'Malik GPT'}));
+app.get('/api/health',(_req,res)=>res.json({ok:true,service:'Malik GPT',storage:pool?'PostgreSQL':'local-file'}));
 
 // Separate administrator session. No credentials or secret default is committed.
 const adminConfigured=()=>Boolean(process.env.ADMIN_LOGIN&&process.env.ADMIN_PASSWORD&&process.env.ADMIN_PASSWORD.length>=12);
