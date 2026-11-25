@@ -453,7 +453,7 @@ $('#aiBadge').addEventListener('click',async()=>{await refreshAI();openModal('И
  const data=await request('/ai-status');
  $('#modalBody').append(paragraph(data.message));
  if(data.models.length)$('#modalBody').append(paragraph('Доступные модели: '+data.models.join(', ')));
- $('#modalBody').append(paragraph('Модели запускаются на сервере через Ollama, а не внутри браузера.'));
+ $('#modalBody').append(paragraph('Автоматические модели без API-ключей: Qwen 2.5 (браузер), SmolLM2 (браузер). При первом сообщении модель скачивается на устройство; скорость зависит от памяти и процессора. Настроенные серверные Ollama/llama.cpp используются первыми.'));
  }catch(e){$('#modalBody').append(paragraph(e.message))}
 });
 $('#menu').addEventListener('click',openSidebar);$('#closeSidebar').addEventListener('click',closeSidebar);
