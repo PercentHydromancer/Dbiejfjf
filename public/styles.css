@@ -52,3 +52,16 @@ body{background:#fff;color:#171717}
 .plain-link{color:#222}
 .error{color:#c23434}
 .scrim{background:#0005}
+
+/* Refined ChatGPT-like white UI */
+html,body{background:#ffffff}
+.sidebar{background:#f8f8f8}
+.main{background:#ffffff}
+.composer{background:#f5f5f5;border-color:#e6e6e6;border-radius:24px}
+.composer:focus-within{border-color:#d1d1d1}
+.welcome .hero-logo{color:#202020}
+.message.assistant .message-bubble{color:#1e1e1e}
+.message.user .message-bubble{background:#f3f3f3;color:#1e1e1e}
+.topbar{border-bottom:1px solid transparent}
+.auth-panel{background:white}
+@media(max-width:750px){.sidebar{box-shadow:8px 0 28px #00000012}}
