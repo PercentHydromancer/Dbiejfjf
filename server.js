@@ -113,7 +113,7 @@ app.post('/api/admin/logout',adminAuth,async(req,res,next)=>{
 });
 
 // Billing routes are registered before chat message endpoints to enforce quotas.
-installBilling({app,store,persist,userAuth,adminAuth,fail});
+const billing=installBilling({app,store,persist,userAuth,adminAuth,fail});
 
 async function jsonFromLocal(url,options={},timeoutMs=9000){
  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),timeoutMs);
@@ -171,7 +171,7 @@ function owned(req,res){const c=store.chats.find(c=>c.id===req.params.id&&c.user
 app.get('/api/chats/:id',userAuth,(req,res)=>{const c=owned(req,res);if(c)res.json({chat:c})});
 app.patch('/api/chats/:id',userAuth,async(req,res,next)=>{try{const c=owned(req,res);if(!c)return;const title=String(req.body.title||'').trim().slice(0,80);if(!title)return fail(res,400,'Введите название');c.title=title;await persist();res.json({chat:c})}catch(e){next(e)}});
 app.delete('/api/chats/:id',userAuth,async(req,res,next)=>{try{const c=owned(req,res);if(!c)return;store.chats=store.chats.filter(x=>x.id!==c.id);await persist();res.json({ok:true})}catch(e){next(e)}});
-app.post('/api/chats/:id/messages',userAuth,async(req,res,next)=>{try{const c=owned(req,res);if(!c)return;const text=String(req.body.text||'').trim();if(!text||text.length>12000)return fail(res,400,'Сообщение должно быть от 1 до 12 000 символов');const m={id:id(),role:'user',content:text,mode:req.body.mode==='code'?'code':'chat',at:clock()};c.messages.push(m);c.messages=c.messages.slice(-120);if(c.title==='Новый чат')c.title=text.slice(0,54);c.updated=clock();await persist();res.json({message:m})}catch(e){next(e)}});
+app.post('/api/chats/:id/messages',userAuth,async(req,res,next)=>{try{const c=owned(req,res);if(!c)return;const text=String(req.body.text||'').trim();if(!text||text.length>12000)return fail(res,400,'Сообщение должно быть от 1 до 12 000 символов');const m={id:id(),role:'user',content:text,mode:req.body.mode==='code'?'code':'chat',at:clock()};c.messages.push(m);billing.recordMessage(req.user);c.messages=c.messages.slice(-120);if(c.title==='Новый чат')c.title=text.slice(0,54);c.updated=clock();await persist();res.json({message:m})}catch(e){next(e)}});
 // Persist a real response generated on the user's own device.
 // No external API key, no server-side inference or pretend model response.
 app.post('/api/chats/:id/browser-reply',userAuth,async(req,res,next)=>{
@@ -270,7 +270,7 @@ app.post('/api/chats/:id/voice',userAuth,voiceRateLimit,async(req,res,next)=>{
     await fs.writeFile(path.join(dir,voiceId+'.'+audioTypes[mime]),audio,{flag:'wx',mode:0o600});
   }
   const m={id:id(),role:'user',content:'🎤 Голосовое сообщение',mode:'chat',voice:{id:voiceId,mime,duration:Math.round(seconds)},at:clock()};
-  chat.messages.push(m);chat.messages=chat.messages.slice(-120);
+  chat.messages.push(m);billing.recordMessage(req.user);chat.messages=chat.messages.slice(-120);
   if(chat.title==='Новый чат')chat.title='Голосовое сообщение';
   chat.updated=clock();await persist();
   res.status(201).json({message:m});
