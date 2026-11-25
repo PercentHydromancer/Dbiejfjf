@@ -19,6 +19,7 @@ function showApp(user) {
  state.user=user;$('#username').textContent=user.name;$('.user-circle').textContent=user.name[0].toUpperCase();
  $('#auth').hidden=true;$('#app').hidden=false;
  refreshChats().catch(e=>notice(e.message));refreshAI().catch(()=>{});
+ window.MalikBilling?.refreshStatus();
 }
 function openModal(title) {$('#modalTitle').textContent=title;$('#modalBody').replaceChildren();$('#modal').showModal()}
 function button(text,fn,cls='action'){const el=document.createElement('button');el.type='button';el.className=cls;el.textContent=text;el.addEventListener('click',fn);return el}
@@ -293,6 +294,7 @@ async function sendMessage(e){
   await refreshChats();
   const message=await generateReplyWithFallback(chatId);
   if(state.chatId===chatId)render(message);
+  window.MalikBilling?.refreshStatus();
   notice('');
  }catch(error){
   notice(error.message);
@@ -489,6 +491,7 @@ function showAdminStats(stats){
   const p=paragraph(u.name+' · чатов: '+u.chats+' · заметок: '+u.notes,'admin-user');
   body.append(p);
  }
+ body.append(button('💳 Заявки на оплату',()=>window.MalikBilling?.showAdminPayments()));
  body.append(button('Выйти из админки',async()=>{
   try{await request('/admin/logout',{method:'POST',body:'{}'});$('#modal').close()}
   catch(e){body.append(paragraph(e.message,'error'))}
@@ -560,9 +563,15 @@ $('#attachText').addEventListener('click',()=>{closeTools();$('#localFile').clic
 $('#localFile').addEventListener('change',async e=>{
  const file=e.target.files?.[0];if(!file)return;
  if(file.size>120000){notice('Максимум 120 КБ текста для вставки в запрос.');return}
- const text=await file.text();
- $('#prompt').value+='Файл '+file.name+':\n'+text.slice(0,10000);
- $('#prompt').dispatchEvent(new Event('input'));$('#localFile').value='';
+ try{
+  // File quota is enforced by the server; an attached text file counts as one upload.
+  await request('/uploads/use',{method:'POST',body:JSON.stringify({name:file.name,bytes:file.size})});
+  const text=await file.text();
+  $('#prompt').value+='Файл '+file.name+':\n'+text.slice(0,10000);
+  $('#prompt').dispatchEvent(new Event('input'));
+  window.MalikBilling?.refreshStatus();
+ }catch(err){notice(err.message)}
+ finally{$('#localFile').value='';}
 });
 document.querySelectorAll('[data-prompt]').forEach(el=>el.addEventListener('click',()=>{
  $('#prompt').value=el.dataset.prompt;$('#mode').value='code';$('#prompt').focus();
