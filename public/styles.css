@@ -129,3 +129,8 @@ html,body{background:#ffffff}
  .topbar{gap:6px}
  .topbar .status{max-width:36%}
 }
+
+/* Visible subscription entry immediately beside the Malik GPT title. */
+.header-plans{border:1px solid #ddd;background:#f6f6f6;color:#222;border-radius:999px;padding:7px 12px;font-weight:650;font-size:12px;white-space:nowrap;cursor:pointer}
+.header-plans:hover{background:#ececec;border-color:#bbb}
+@media(max-width:750px){.top-left{gap:5px}.top-left strong{font-size:15px}.header-plans{font-size:11px;padding:6px 8px}.topbar .status{max-width:28%}.billing-badge{max-width:26%;overflow:hidden;text-overflow:ellipsis}}
