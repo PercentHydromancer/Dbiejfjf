@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#212121">
+<title>Malik GPT</title>
+<link rel="stylesheet" href="/styles.css">
+<script src="/app.js" defer></script>
+</head>
+<body>
+<div id="auth" class="auth-shell">
+ <div class="auth-panel">
+  <div class="brand-big"><span class="logo">✦</span> Malik GPT</div>
+  <h1 id="authTitle">Добро пожаловать</h1>
+  <p>Локальный ИИ без внешних API-ключей</p>
+  <form id="authForm" class="auth-form">
+   <label for="authName">Имя пользователя</label><input id="authName" type="text" minlength="3" maxlength="40" autocomplete="username" required>
+   <label for="authPass">Пароль</label><input id="authPass" type="password" minlength="8" autocomplete="current-password" required>
+   <button class="primary" type="submit" id="authSubmit">Войти</button>
+  </form>
+  <p id="authError" class="error" role="alert"></p>
+  <button class="plain-link" id="authSwitch" type="button">Создать аккаунт</button>
+ </div>
+</div>
+<div id="app" class="layout" hidden>
+ <aside class="sidebar" id="sidebar">
+  <div class="sidebar-head"><div class="brand"><span class="logo">✦</span> Malik GPT</div><button class="icon-btn hide-desktop" id="closeSidebar" type="button" aria-label="Закрыть">×</button></div>
+  <button class="side-main" id="newChat" type="button"><span>✎</span> Новый чат</button>
+  <button class="side-main" id="openBuilder" type="button"><span>⌘</span> Создать файлы</button>
+  <button class="side-main" id="openNotes" type="button"><span>▤</span> Заметки</button>
+  <div class="side-caption">История</div>
+  <input class="search" id="searchChats" placeholder="Поиск по чатам" aria-label="Поиск чатов">
+  <div id="chatList" class="chat-list"></div>
+  <div class="sidebar-footer"><div class="user-badge"><span class="user-circle">M</span><span id="username"></span></div><button class="side-main" id="logout" type="button">Выйти</button></div>
+ </aside>
+ <div id="scrim" class="scrim" hidden></div>
+ <main class="main">
+  <header class="topbar"><div class="top-left"><button id="menu" class="icon-btn hide-desktop" type="button" aria-label="Открыть меню">☰</button><strong>Malik GPT</strong><span class="top-caption">Локальный ассистент</span></div><button id="aiBadge" class="status" type="button">Проверка модели…</button></header>
+  <div id="welcome" class="welcome"><div class="hero-logo">✦</div><h1>С чего начнём?</h1><p>Общение, программирование и готовые файлы — в одном месте.</p><div class="suggestions"><button data-prompt="Объясни простыми словами, как работает искусственный интеллект." type="button">Объясни интересную тему</button><button data-prompt="Создай красивый одностраничный сайт. Дай полные index.html, style.css и script.js." type="button">Создай сайт</button><button data-prompt="Напиши программу на Python для учёта задач. Дай полный файл main.py." type="button">Напиши код на Python</button></div></div>
+  <div id="messages" class="messages" aria-live="polite" hidden></div>
+  <div class="composer-region">
+   <p id="notice" class="notice" role="status" hidden></p>
+   <form id="composer" class="composer">
+    <textarea id="prompt" rows="1" maxlength="12000" placeholder="Спроси Malik GPT…" required></textarea>
+    <div class="composer-bottom"><div class="composer-left"><select id="mode" aria-label="Режим"><option value="chat">✦ Общение</option><option value="code">⌘ Код и файлы</option></select><button id="attachText" class="tool" type="button" title="Открыть текстовый файл">📎 Файл</button><input id="localFile" type="file" accept=".txt,.md,.html,.css,.js,.json,.py,.csv,.sql,.xml,.yml,.yaml" hidden></div><button id="send" class="send" type="submit" aria-label="Отправить">↑</button></div>
+   </form>
+   <div class="disclaimer">Модели запускаются локально через Ollama. Проверяй важную информацию.</div>
+  </div>
+ </main>
+</div>
+<dialog id="modal" class="modal"><div class="modal-header"><h2 id="modalTitle">Файлы</h2><button id="closeModal" class="icon-btn" type="button" aria-label="Закрыть">×</button></div><div id="modalBody"></div></dialog>
+</body>
+</html>
