@@ -191,24 +191,66 @@ async function localSources(){
  }
  return sources;
 }
-// OVHcloud anonymous LLMs: keyless sandbox, limited per model per public IP.
+// Anonymous providers do not require Malik GPT users to create extra accounts.
+// Provider access is best-effort and may be rate-limited or discontinued.
 const KEYLESS_CLOUD_ENABLED=process.env.KEYLESS_CLOUD_ENABLED!=='false';
 const ANONYMOUS_OVH_URL='https://oai.endpoints.kepler.ai.cloud.ovh.net/v1/chat/completions';
-const ANONYMOUS_OVH_MODELS=['Olala-v1.0-mini-7A1B','Olala-v1.0-summarise','Qwen3.6-27B'];
-async function* aiFallbackSources(){
- if(KEYLESS_CLOUD_ENABLED){
-  for(const model of ANONYMOUS_OVH_MODELS)yield {type:'ovh-anonymous',model,base:ANONYMOUS_OVH_URL};
+const ANONYMOUS_OVH_MODELS=['Olala-v1.0-mini-7A1B','Olala-v1.0-summarise'];
+const cloudProviders=()=>KEYLESS_CLOUD_ENABLED?[
+ {type:'llm7',model:'gpt-4.1-nano-2025-04-14',base:'https://api.llm7.io/v1/chat/completions'},
+ {type:'pollinations',model:'openai',base:'https://text.pollinations.ai/openai/chat/completions'},
+ ...ANONYMOUS_OVH_MODELS.map(model=>({type:'ovh-anonymous',model,base:ANONYMOUS_OVH_URL}))
+]:[];
+const providerLabel=source=>({
+ llm7:'LLM7',pollinations:'Pollinations','ovh-anonymous':'OVHcloud',
+ ollama:'Ollama','openai-local':'Локальный сервер'
+}[source.type]||'ИИ')+': '+source.model;
+async function askSource(source,messages,mode,signal){
+ const timeout=source.type==='ollama'||source.type==='openai-local'?18000:10500;
+ const controller=new AbortController();
+ const abort=()=>controller.abort();
+ signal?.addEventListener('abort',abort,{once:true});
+ const timer=setTimeout(abort,timeout);
+ try{
+  const endpoint=source.type==='ollama'?source.base+'/api/chat':
+   source.type==='openai-local'?source.base+'/chat/completions':source.base;
+  const body=source.type==='ollama'
+   ?{model:source.model,stream:false,messages,options:{num_predict:mode==='code'?1800:900}}
+   :{model:source.model,stream:false,messages,max_tokens:mode==='code'?1600:900};
+  const headers={'Content-Type':'application/json'};
+  if(source.type==='llm7')headers.Authorization='Bearer unused';
+  const response=await fetch(endpoint,{method:'POST',headers,body:JSON.stringify(body),signal:controller.signal});
+  if(!response.ok){
+   await response.body?.cancel().catch(()=>{});
+   throw Error('HTTP '+response.status);
+  }
+  const data=await response.json();
+  const content=source.type==='ollama'?data.message?.content:data.choices?.[0]?.message?.content;
+  const answer=typeof content==='string'?content.trim():
+   Array.isArray(content)?content.filter(x=>x?.type==='text').map(x=>x.text||'').join('\n').trim():'';
+  if(!answer)throw Error('Пустой ответ');
+  return {answer,model:providerLabel(source)};
+ }finally{
+  clearTimeout(timer);
+  signal?.removeEventListener('abort',abort);
  }
- for(const source of await localSources())yield source;
+}
+async function firstAvailable(sources,messages,mode){
+ if(!sources.length)throw Error('Нет подключённых моделей');
+ const controller=new AbortController();
+ try{
+  const result=await Promise.any(sources.map(source=>askSource(source,messages,mode,controller.signal)));
+  return result;
+ }finally{controller.abort()}
 }
 app.get('/api/ai-status',userAuth,async(_req,res)=>{
- const cloudModels=KEYLESS_CLOUD_ENABLED?ANONYMOUS_OVH_MODELS.map(m=>'OVHcloud: '+m):[];
+ const cloud=cloudProviders().map(providerLabel);
  const locals=await Promise.race([localSources(),new Promise(resolve=>setTimeout(()=>resolve([]),800))]);
- const models=[...cloudModels,...locals.map(s=>(s.type==='ollama'?'Ollama: ':'Локальный сервер: ')+s.model)];
- res.json({ready:models.length>0,models,provider:'keyless cloud + local + browser Puter.js',
-  message:KEYLESS_CLOUD_ENABLED?'Облачные ИИ без API-ключа добавлены. Доступность проверяется при генерации; лимиты провайдера сохраняются.':
-    (models.length?'Подключены локальные модели':'Серверной модели нет; в браузере доступен резервный ИИ.')});
+ const models=[...cloud,...locals.map(providerLabel)];
+ res.json({ready:models.length>0,models,provider:'anonymous-cloud + local + device',
+  message:'Без дополнительной регистрации. Облачные источники имеют общие лимиты и могут временно не отвечать.'});
 });
+
 app.get('/api/chats',userAuth,(req,res)=>res.json({chats:store.chats.filter(c=>c.userId===req.user.id).sort((a,b)=>b.updated-a.updated).map(({id,title,updated})=>({id,title,updated}))}));
 app.post('/api/chats',userAuth,async(req,res,next)=>{try{const c={id:id(),userId:req.user.id,title:'Новый чат',updated:clock(),messages:[]};store.chats.push(c);await persist();res.json({chat:c})}catch(e){next(e)}});
 function owned(req,res){const c=store.chats.find(c=>c.id===req.params.id&&c.userId===req.user.id);if(!c)fail(res,404,'Чат не найден');return c}
@@ -249,29 +291,21 @@ app.post('/api/chats/:id/reply',userAuth,async(req,res,next)=>{
    ?'Ты Malik GPT, помощник по программированию. Отвечай по-русски. Если просят файлы, предоставляй ПОЛНЫЙ код каждого файла в отдельных Markdown блоках с именем: html filename=index.html, css filename=style.css, js filename=script.js. Не утверждай, что создал файлы на устройстве, если не создавал.'
    :'Ты Malik GPT, полезный русскоязычный помощник. Не выдумывай действия или инструменты.';
   const messages=[{role:'system',content:sys},...c.messages.slice(-20).map(m=>({role:m.role,content:m.content}))];
-  let reason='Модели не ответили';
-  for await(const source of aiFallbackSources()){
-   const ctrl=new AbortController(),timer=setTimeout(()=>ctrl.abort(),source.type==='ovh-anonymous'?16000:60000);
-   const modelLabel=(source.type==='ovh-anonymous'?'OVHcloud: ':source.type==='ollama'?'Ollama: ':'Локальный сервер: ')+source.model;
-   try{
-    const endpoint=source.type==='ovh-anonymous'?source.base:source.type==='ollama'?source.base+'/api/chat':source.base+'/chat/completions';
-    const body=source.type==='ollama'
-      ?{model:source.model,stream:false,messages,options:{num_predict:last.mode==='code'?2400:1400}}
-      :{model:source.model,stream:false,messages,max_tokens:last.mode==='code'?1600:1000};
-    const response=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},
-      signal:ctrl.signal,body:JSON.stringify(body)});
-    if(!response.ok){reason=modelLabel+' ответил HTTP '+response.status;await response.body?.cancel().catch(()=>{});continue}
-    const result=await response.json();
-    const content=source.type==='ollama'?result.message?.content:result.choices?.[0]?.message?.content;
-    const answer=String(content||'').trim();
-    if(!answer){reason=modelLabel+' вернул пустой ответ';continue}
-    const message={id:id(),role:'assistant',content:answer.slice(0,110000),replyTo:last.id,model:modelLabel,at:clock()};
-    c.messages.push(message);c.updated=clock();await persist();
-    return res.json({message});
-   }catch(e){reason=modelLabel+': '+(e.name==='AbortError'?'превышено время ответа':'ошибка связи');}
-   finally{clearTimeout(timer)}
+  let output=null;
+  try{
+   // Try several independent keyless clouds concurrently rather than waiting 16s per model.
+   output=await firstAvailable(cloudProviders(),messages,last.mode);
+  }catch{
+   const local=await Promise.race([localSources(),new Promise(resolve=>setTimeout(()=>resolve([]),1200))]);
+   try{output=await firstAvailable(local.slice(0,3),messages,last.mode)}catch{}
   }
-  return fail(res,503,'Облачные ИИ без ключа и локальные модели не ответили. '+reason+'. Вопрос сохранён; браузер попробует запасной Puter.js.');
+  if(!output)return fail(res,503,'Все бесплатные ИИ сейчас заняты или недоступны. Попробуй повторить запрос позднее.');
+  // A single successful response is stored, regardless of how many providers were queried.
+  const existing=c.messages.find(m=>m.replyTo===last.id);
+  if(existing)return res.json({message:existing});
+  const message={id:id(),role:'assistant',content:output.answer.slice(0,110000),replyTo:last.id,model:output.model,at:clock()};
+  c.messages.push(message);c.updated=clock();await persist();
+  return res.json({message});
  }catch(e){next(e)}
 });
 
