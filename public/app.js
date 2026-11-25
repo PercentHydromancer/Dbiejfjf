@@ -371,6 +371,7 @@ function showAdminStats(stats){
 
 $('#newChat').addEventListener('click',()=>createChat().catch(e=>notice(e.message)));
 $('#adminOpen').addEventListener('click',()=>openAdmin().catch(e=>notice(e.message)));
+$('#adminFromAuth').addEventListener('click',()=>openAdmin().catch(e=>$('#authError').textContent=e.message));
 $('#openBuilder').addEventListener('click',builder);
 $('#openNotes').addEventListener('click',()=>notes().catch(e=>alert(e.message)));
 $('#logout').addEventListener('click',async()=>{
