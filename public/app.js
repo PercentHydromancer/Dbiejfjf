@@ -200,22 +200,79 @@ async function getBrowserAIResponse(messages,mode){
   worker.postMessage({type:'generate',id,messages,mode});
  });
 }
-async function generateReplyWithFallback(chatId){
- // Prefer any actually running server model, then automatically use the browser.
- if(state.serverAIReady!==false){
+let puterScriptPromise=null;
+function ensurePuter(){
+ if(window.puter?.ai?.chat)return Promise.resolve(window.puter);
+ if(puterScriptPromise)return puterScriptPromise;
+ puterScriptPromise=new Promise((resolve,reject)=>{
+  const el=document.createElement('script');
+  el.src='https://js.puter.com/v2/';
+  el.async=true;
+  el.onload=()=>window.puter?.ai?.chat?resolve(window.puter):reject(Error('Puter.js не запустился'));
+  el.onerror=()=>reject(Error('Не удалось подключить Puter.js. Проверь интернет или блокировку скриптов.'));
+  document.head.append(el);
+ }).catch(e=>{puterScriptPromise=null;throw e});
+ return puterScriptPromise;
+}
+async function getPuterAIResponse(messages,mode){
+ const puter=await ensurePuter();
+ const sys=mode==='code'
+  ?'Ты Malik GPT. Пиши полный рабочий код в отдельных Markdown-блоках с названием файла, например html filename=index.html. Отвечай по-русски.'
+  :'Ты Malik GPT, полезный помощник. Отвечай по-русски ясно и точно, не выдумывай возможности.';
+ const conversation=[{role:'system',content:sys},...messages.slice(-12)
+  .filter(m=>['user','assistant'].includes(m.role)&&!m.voice)
+  .map(m=>({role:m.role,content:String(m.content||'').slice(0,7000)}))];
+ const candidates=[
+  {model:'gpt-5.4-nano',label:'Puter GPT-5.4 nano'},
+  {model:'google/gemini-3.5-flash-lite',label:'Puter Gemini Flash Lite'},
+  {model:'google/gemini-2.5-flash',label:'Puter Gemini 2.5 Flash'}
+ ];
+ let lastError='';
+ for(const candidate of candidates){
   try{
-   const result=await request('/chats/'+encodeURIComponent(chatId)+'/reply',{method:'POST',body:'{}'});
-   return result.message;
-  }catch(error){
-   if(!state.user||!/(локальн|модел|недоступн|http 429|все.+источник|503|ИИ не запущен)/i.test(error.message))
-    throw error;
-   notice('Серверная модель недоступна. Пробую ИИ прямо в браузере…');
+   notice('Пробую резервный облачный ИИ '+candidate.label+'…');
+   const result=await puter.ai.chat(conversation,{model:candidate.model,normalize:true});
+   const content=result?.message?.content;
+   const answer=typeof content==='string'?content.trim():
+     Array.isArray(content)?content.filter(x=>x?.type==='text').map(x=>x.text||'').join('\n').trim():'';
+   if(!answer){lastError=candidate.label+' вернул пустой ответ';continue}
+   return {model:candidate.label,answer:answer.slice(0,24000)};
+  }catch(e){
+   const message=String(e?.message||e?.msg||e?.error||e).slice(0,250);
+   lastError=candidate.label+': '+message;
+   // Authentication/credit problems cannot be fixed by cycling models.
+   if(/auth|sign.?in|login|popup|payment|balance|credit|funds|quota|user.pays/i.test(message))break;
   }
+ }
+ throw Error('Резерв Puter.js недоступен. '+lastError+
+  '. Возможно, требуется подтверждение входа в Puter или исчерпаны его ресурсы.');
+}
+async function generateReplyWithFallback(chatId){
+ // 1) Hosted keyless models (OVHcloud), then any configured local model.
+ let backendError='';
+ try{
+  const result=await request('/chats/'+encodeURIComponent(chatId)+'/reply',{method:'POST',body:'{}'});
+  return result.message;
+ }catch(error){
+  if(!state.user||/^(Сессия|Войдите|Требуется вход)/i.test(error.message))throw error;
+  backendError=error.message;
+  notice('Облачные модели временно недоступны. Переключаюсь на Puter.js…');
  }
  const {chat}=await request('/chats/'+encodeURIComponent(chatId));
  const last=[...chat.messages].reverse().find(m=>m.role==='user');
- if(!last||last.voice)throw Error('Для браузерной модели нужно последнее текстовое сообщение.');
- const generated=await getBrowserAIResponse(chat.messages,last.mode||'chat');
+ if(!last||last.voice)throw Error('Для ИИ нужен текстовый вопрос.');
+ let generated;
+ let puterError='';
+ try{generated=await getPuterAIResponse(chat.messages,last.mode||'chat')}
+ catch(error){
+  puterError=error.message;
+  notice('Puter.js недоступен. Проверяю ИИ прямо на устройстве…');
+  try{generated=await getBrowserAIResponse(chat.messages,last.mode||'chat')}
+  catch(deviceError){
+   throw Error('Все источники ИИ не ответили. Облако: '+backendError+
+    '. Puter: '+puterError+'. Устройство: '+deviceError.message);
+  }
+ }
  notice('Ответ получен от '+generated.model+'. Сохраняю в историю…');
  const {message}=await request('/chats/'+encodeURIComponent(chatId)+'/browser-reply',{
   method:'POST',body:JSON.stringify({replyTo:last.id,answer:generated.answer,model:generated.model})
