@@ -99,3 +99,33 @@ html,body{background:#ffffff}
  .plus-button,.voice-button{height:35px;width:35px}
  .status{max-width:54%}
 }
+
+/* Pricing and payments */
+.billing-badge{border:1px solid #ddd;background:#f5f5f5;color:#333;border-radius:20px;padding:7px 11px;font-size:12px;white-space:nowrap;cursor:pointer}
+.billing-badge:hover{background:#eaeaea}
+.billing-active{background:#f8f8f8;border:1px solid #e5e5e5;border-radius:14px;padding:15px;margin:12px 0}
+.billing-active strong{font-size:16px}
+.billing-muted{font-size:13px;color:#6c6c6c;margin:6px 0 12px}
+.billing-usage{display:flex;gap:12px;flex-wrap:wrap;color:#424242;font-size:13px}
+.billing-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:14px 0}
+.billing-card{border:1px solid #e6e6e6;background:white;border-radius:14px;padding:15px;min-width:0}
+.billing-card.selected{border-color:#555;background:#f8f8f8}
+.billing-card h3{margin:0 0 9px;font-size:16px}
+.billing-card p{font-size:13px;margin:7px 0}
+.billing-price{font-size:20px;font-weight:750;letter-spacing:-.3px;margin:3px 0 10px}
+.billing-current{display:inline-block;font-size:12px;color:#3b6f4a;background:#e9f6ee;padding:6px 9px;border-radius:15px;margin-top:9px}
+.billing-action{border:0;color:white;background:#171717;border-radius:9px;padding:10px 13px;margin:10px 9px 4px 0;font-weight:600}
+.billing-secondary{border:1px solid #ddd;color:#252525;background:#f7f7f7;border-radius:9px;padding:10px 13px;margin:10px 9px 4px 0}
+.billing-action:disabled,.billing-secondary:disabled{opacity:.5;cursor:not-allowed}
+.billing-details{border:1px solid #eee;background:#fafafa;padding:13px;border-radius:12px;overflow-wrap:anywhere}
+.billing-details p{margin:8px 0;font-size:13px}
+.billing-file{display:block;width:100%;margin:13px 0;font-size:14px}
+.billing-error{color:#b33333;font-size:13px;overflow-wrap:anywhere}
+.billing-payment-row{padding:12px 0;border-top:1px solid #e5e5e5;overflow-wrap:anywhere}
+.billing-payment-row p{margin:4px 0;font-size:13px;color:#555}
+@media(max-width:700px){
+ .billing-grid{grid-template-columns:1fr}
+ .billing-badge{font-size:10px;padding:6px 8px}
+ .topbar{gap:6px}
+ .topbar .status{max-width:36%}
+}
