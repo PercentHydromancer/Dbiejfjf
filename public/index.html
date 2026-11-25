@@ -32,7 +32,9 @@
   <div class="side-caption">История</div>
   <input class="search" id="searchChats" placeholder="Поиск по чатам" aria-label="Поиск чатов">
   <div id="chatList" class="chat-list"></div>
-  <div class="sidebar-footer"><div class="user-badge"><span class="user-circle">M</span><span id="username"></span></div><button class="side-main" id="logout" type="button">Выйти</button></div>
+  <div class="sidebar-footer"><div class="user-badge"><span class="user-circle">M</span><span id="username"></span></div>
+  <button class="side-main" id="adminOpen" type="button"><span>⚙</span> Админ-панель</button>
+  <button class="side-main" id="logout" type="button">Выйти</button></div>
  </aside>
  <div id="scrim" class="scrim" hidden></div>
  <main class="main">
@@ -43,8 +45,26 @@
    <p id="notice" class="notice" role="status" hidden></p>
    <form id="composer" class="composer">
     <textarea id="prompt" rows="1" maxlength="12000" placeholder="Спроси Malik GPT…" required></textarea>
-    <div class="composer-bottom"><div class="composer-left"><select id="mode" aria-label="Режим"><option value="chat">✦ Общение</option><option value="code">⌘ Код и файлы</option></select><button id="attachText" class="tool" type="button" title="Открыть текстовый файл">📎 Файл</button><input id="localFile" type="file" accept=".txt,.md,.html,.css,.js,.json,.py,.csv,.sql,.xml,.yml,.yaml" hidden></div><button id="send" class="send" type="submit" aria-label="Отправить">↑</button></div>
+    <div class="composer-bottom">
+    <div class="composer-left">
+      <button id="plusTools" class="plus-button" type="button" aria-label="Инструменты" aria-expanded="false">＋</button>
+      <div id="toolMenu" class="tools-menu" hidden>
+        <button id="attachText" type="button">📎 Загрузить файл</button>
+        <button id="plusBuilder" type="button">⌘ Создать файлы</button>
+        <button id="plusNotes" type="button">▤ Мои заметки</button>
+        <button id="plusExport" type="button">↓ Скачать переписку</button>
+        <button id="plusVoice" type="button">🎙 Записать голосовое</button>
+      </div>
+      <input id="localFile" type="file" accept=".txt,.md,.html,.css,.js,.json,.py,.csv,.sql,.xml,.yml,.yaml" hidden>
+      <select id="mode" aria-label="Режим"><option value="chat">✦ Общение</option><option value="code">⌘ Код</option></select>
+    </div>
+    <div class="composer-right">
+      <button id="voiceToggle" class="voice-button" type="button" aria-label="Записать голосовое сообщение" title="Записать голосовое">🎙</button>
+      <button id="send" class="send" type="submit" aria-label="Отправить">↑</button>
+    </div>
+   </div>
    </form>
+   <div id="recordStatus" class="record-status" aria-live="polite" hidden></div>
    <div class="disclaimer">Модели запускаются локально через Ollama. Проверяй важную информацию.</div>
   </div>
  </main>
