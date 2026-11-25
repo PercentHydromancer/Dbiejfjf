@@ -23,6 +23,7 @@ const isImageFormat=(mime,b)=>{
 export function installBilling({app,store,persist,userAuth,adminAuth,fail}){
  store.payments ||= [];
  store.fileUses ||= [];
+ store.messageUses ||= [];
  const limits=()=>({
   ...PLANS,
   // Image generation isn't implemented in this repository. Do not sell non-working capacity.
@@ -41,8 +42,10 @@ export function installBilling({app,store,persist,userAuth,adminAuth,fail}){
  }
  function dailyUsage(user){
   const day=isoDay(),start=Date.parse(day+'T00:00:00.000Z');
-  const messages=store.chats.filter(c=>c.userId===user.id)
+  const historicalMessages=store.chats.filter(c=>c.userId===user.id)
    .reduce((count,c)=>count+c.messages.filter(m=>m.role==='user'&&Number(m.at||0)>=start).length,0);
+  const ledger=store.messageUses.find(x=>x.userId===user.id&&x.day===day);
+  const messages=Math.max(historicalMessages,ledger?.count||0);
   const files=store.fileUses.filter(x=>x.userId===user.id&&x.day===day).length;
   return {messages,files,day};
  }
@@ -58,6 +61,17 @@ export function installBilling({app,store,persist,userAuth,adminAuth,fail}){
     receiver:process.env.PAYMENT_RECEIVER||null,
     bank:process.env.PAYMENT_BANK||null
    }};
+ }
+ // Record successful sends separately so deleting a chat never resets the daily allowance.
+ function recordMessage(user){
+  const day=isoDay();
+  let entry=store.messageUses.find(x=>x.userId===user.id&&x.day===day);
+  if(entry)entry.count++;
+  else{
+   const existing=dailyUsage(user).messages; // route already appended the current user message
+   store.messageUses.push({userId:user.id,day,count:existing});
+  }
+  store.messageUses=store.messageUses.filter(x=>x.day>=isoDay(Date.now()-2*DAY));
  }
  function requireMessageQuota(req,res,next){
   const status=billStatus(req.user);
@@ -145,5 +159,5 @@ export function installBilling({app,store,persist,userAuth,adminAuth,fail}){
    res.json({ok:true,request:paymentPublic(p)});
   }catch(e){next(e)}
  });
- return {entitlements,billStatus};
+ return {entitlements,billStatus,recordMessage};
 }
