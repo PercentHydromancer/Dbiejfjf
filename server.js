@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import pg from 'pg';
+import { installBilling } from './billing.js';
 import { fileURLToPath } from 'node:url';
 const app=express();
 app.set('trust proxy',1);
@@ -62,7 +63,7 @@ function loginCookie(req,res,u){const token=crypto.randomBytes(32).toString('hex
 function passwordHash(p,salt){return crypto.scryptSync(p,salt,64).toString('hex')}
 const access=new Map();
 function limit(req,res,next){const key=req.ip||'unknown',list=(access.get(key)||[]).filter(x=>x>clock()-600000);if(list.length>20)return fail(res,429,'Слишком много попыток. Попробуйте позже.');list.push(clock());access.set(key,list);if(access.size>5000)access.clear();next()}
-app.post('/api/register',limit,async(req,res,next)=>{try{const name=String(req.body.name||'').trim(),pass=String(req.body.password||'');if(name.length<3||name.length>40||pass.length<8||pass.length>128)return fail(res,400,'Имя от 3 символов, пароль от 8 символов');if(store.users.some(u=>u.name.toLowerCase()===name.toLowerCase()))return fail(res,409,'Имя уже занято');const salt=crypto.randomBytes(16).toString('hex'),u={id:id(),name,salt,hash:passwordHash(pass,salt)};store.users.push(u);loginCookie(req,res,u);await persist();res.json({user:userView(u)})}catch(e){next(e)}});
+app.post('/api/register',limit,async(req,res,next)=>{try{const name=String(req.body.name||'').trim(),pass=String(req.body.password||'');if(name.length<3||name.length>40||pass.length<8||pass.length>128)return fail(res,400,'Имя от 3 символов, пароль от 8 символов');if(store.users.some(u=>u.name.toLowerCase()===name.toLowerCase()))return fail(res,409,'Имя уже занято');const salt=crypto.randomBytes(16).toString('hex'),u={id:id(),name,salt,hash:passwordHash(pass,salt),createdAt:Date.now()};store.users.push(u);loginCookie(req,res,u);await persist();res.json({user:userView(u)})}catch(e){next(e)}});
 app.post('/api/login',limit,async(req,res,next)=>{try{const name=String(req.body.name||'').trim(),pass=String(req.body.password||'');const u=store.users.find(u=>u.name.toLowerCase()===name.toLowerCase());if(!u||passwordHash(pass,u.salt)!==u.hash)return fail(res,401,'Неверные данные');loginCookie(req,res,u);await persist();res.json({user:userView(u)})}catch(e){next(e)}});
 app.post('/api/logout',userAuth,async(req,res,next)=>{try{store.sessions=store.sessions.filter(s=>s.hash!==digest(cookie(req)));res.clearCookie('malik_session',{path:'/'});res.clearCookie('session',{path:'/'});await persist();res.json({ok:true})}catch(e){next(e)}});
 app.get('/api/me',userAuth,(req,res)=>res.json({user:userView(req.user)}));
@@ -110,6 +111,9 @@ app.post('/api/admin/logout',adminAuth,async(req,res,next)=>{
   res.clearCookie('malik_admin',{path:'/'});await persist();res.json({ok:true});
  }catch(e){next(e)}
 });
+
+// Billing routes are registered before chat message endpoints to enforce quotas.
+installBilling({app,store,persist,userAuth,adminAuth,fail});
 
 async function jsonFromLocal(url,options={},timeoutMs=9000){
  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),timeoutMs);
