@@ -131,7 +131,8 @@ async function refreshAI(){
  try {
   const status=await request('/ai-status');
   const badge=$('#aiBadge');badge.className='status '+(status.ready?'ready':'bad');
-  badge.textContent=status.ready?'● '+status.models[0]:'● Нет локальной модели';
+  state.serverAIReady=Boolean(status.ready);
+  badge.textContent=status.ready?'● '+status.models[0]:'◌ ИИ в браузере · без ключа';
   badge.title=status.message;
  }catch{$('#aiBadge').textContent='Нет связи'}
 }
@@ -169,34 +170,93 @@ function chatMenu(chat){
   await refreshChats();
  }));
 }
+
+let browserAIWorker=null;
+let browserTaskNumber=0;
+async function getBrowserAIResponse(messages,mode){
+ if(typeof Worker==='undefined')throw Error('Этот браузер не поддерживает запуск локального ИИ.');
+ // Run heavy model computations away from the UI thread.
+ if(!browserAIWorker)browserAIWorker=new Worker('/browser-ai-worker.js?v=1',{type:'module'});
+ const worker=browserAIWorker,id=++browserTaskNumber;
+ return new Promise((resolve,reject)=>{
+  const receive=event=>{
+   const msg=event.data;
+   if(msg?.id!==id)return;
+   if(msg.type==='progress'){notice(msg.message);return}
+   worker.removeEventListener('message',receive);
+   worker.removeEventListener('error',fault);
+   if(msg.type==='done')resolve({answer:msg.answer,model:msg.model});
+   else reject(Error(msg.error||'Ошибка браузерной модели.'));
+  };
+  const fault=event=>{
+   worker.removeEventListener('message',receive);
+   worker.removeEventListener('error',fault);
+   try{worker.terminate()}catch{}
+   if(browserAIWorker===worker)browserAIWorker=null;
+   reject(Error('Не удалось загрузить браузерный ИИ. Попробуй другой браузер или проверь интернет.'));
+  };
+  worker.addEventListener('message',receive);
+  worker.addEventListener('error',fault);
+  worker.postMessage({type:'generate',id,messages,mode});
+ });
+}
+async function generateReplyWithFallback(chatId){
+ // Prefer any actually running server model, then automatically use the browser.
+ if(state.serverAIReady!==false){
+  try{
+   const result=await request('/chats/'+encodeURIComponent(chatId)+'/reply',{method:'POST',body:'{}'});
+   return result.message;
+  }catch(error){
+   if(!state.user||!/(локальн|модел|недоступн|http 429|все.+источник|503|ИИ не запущен)/i.test(error.message))
+    throw error;
+   notice('Серверная модель недоступна. Пробую ИИ прямо в браузере…');
+  }
+ }
+ const {chat}=await request('/chats/'+encodeURIComponent(chatId));
+ const last=[...chat.messages].reverse().find(m=>m.role==='user');
+ if(!last||last.voice)throw Error('Для браузерной модели нужно последнее текстовое сообщение.');
+ const generated=await getBrowserAIResponse(chat.messages,last.mode||'chat');
+ notice('Ответ получен от '+generated.model+'. Сохраняю в историю…');
+ const {message}=await request('/chats/'+encodeURIComponent(chatId)+'/browser-reply',{
+  method:'POST',body:JSON.stringify({replyTo:last.id,answer:generated.answer,model:generated.model})
+ });
+ return message;
+}
 async function sendMessage(e){
  e?.preventDefault();if(state.busy)return;
  const text=$('#prompt').value.trim();if(!text)return;
  state.busy=true;$('#send').disabled=true;notice('');
- try {
+ try{
   if(!state.chatId)await createChat();
-  const id=state.chatId;
-  await request('/chats/'+id+'/messages',{method:'POST',body:JSON.stringify({text,mode:$('#mode').value})});
+  const chatId=state.chatId;
+  await request('/chats/'+encodeURIComponent(chatId)+'/messages',{method:'POST',
+   body:JSON.stringify({text,mode:$('#mode').value})});
   $('#prompt').value='';$('#prompt').style.height='';
   render({role:'user',content:text});
   await refreshChats();
-   const {message}=await request('/chats/'+id+'/reply',{method:'POST',body:'{}'});
-  if(state.chatId===id)render(message);
- }catch(err){
-  notice(err.message);
-  if(state.chatId)showRetry();
+  const message=await generateReplyWithFallback(chatId);
+  if(state.chatId===chatId)render(message);
+  notice('');
+ }catch(error){
+  notice(error.message);
+  if(state.user&&state.chatId)showRetry();
  }finally{state.busy=false;$('#send').disabled=false}
 }
-function showRetry() {
- const noticeEl=$('#notice');
- const existing=noticeEl.querySelector('button');if(existing)return;
+function showRetry(){
+ const el=$('#notice');if(el.querySelector('button'))return;
  const retry=button('↻ Повторить ответ',async()=>{
-  retry.disabled=true;
-  try{const id=state.chatId,{message}=await request('/chats/'+id+'/reply',{method:'POST',body:'{}'});
-   notice('');const {chat}=await request('/chats/'+id);view(chat);
+  if(state.busy)return;
+  state.busy=true;retry.disabled=true;$('#send').disabled=true;
+  const id=state.chatId;
+  try{
+   const message=await generateReplyWithFallback(id);
+   notice('');
+   const {chat}=await request('/chats/'+encodeURIComponent(id));
+   if(state.chatId===id)view(chat);
   }catch(e){notice(e.message);showRetry()}
+  finally{state.busy=false;$('#send').disabled=false}
  },'mini-btn');
- noticeEl.append(document.createTextNode(' '),retry);
+ el.append(document.createTextNode(' '),retry);
 }
 function starter(title){
  const escaped=title.replace(/[&<>"]/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch]));
