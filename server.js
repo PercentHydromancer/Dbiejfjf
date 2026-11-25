@@ -36,7 +36,15 @@ async function initializeStore(){
   if(saved&&typeof saved==='object'){
     for(const key of Object.keys(store))if(Array.isArray(saved[key]))store[key]=saved[key];
   }
-  if(pool)await persist();
+  // Existing accounts created before tariffs had no createdAt.
+  // Give each such account one 72-hour trial starting at this migration.
+  let migrated=false;
+  for(const user of store.users){
+    if(!Number.isFinite(user.createdAt)){
+      user.createdAt=Date.now();migrated=true;
+    }
+  }
+  if(pool||migrated)await persist();
 }
 async function persist(){
   queued=queued.catch(e=>{console.error('Previous storage write failed:',e.message)}).then(async()=>{
