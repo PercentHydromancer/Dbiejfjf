@@ -143,12 +143,23 @@ async function localSources(){
  }
  return sources;
 }
+// OVHcloud anonymous LLMs: keyless sandbox, limited per model per public IP.
+const KEYLESS_CLOUD_ENABLED=process.env.KEYLESS_CLOUD_ENABLED!=='false';
+const ANONYMOUS_OVH_URL='https://oai.endpoints.kepler.ai.cloud.ovh.net/v1/chat/completions';
+const ANONYMOUS_OVH_MODELS=['Olala-v1.0-mini-7A1B','Olala-v1.0-summarise','Qwen3.6-27B'];
+async function* aiFallbackSources(){
+ if(KEYLESS_CLOUD_ENABLED){
+  for(const model of ANONYMOUS_OVH_MODELS)yield {type:'ovh-anonymous',model,base:ANONYMOUS_OVH_URL};
+ }
+ for(const source of await localSources())yield source;
+}
 app.get('/api/ai-status',userAuth,async(_req,res)=>{
- const sources=await localSources();
- const models=sources.map(s=>(s.type==='ollama'?'Ollama: ':'Локальный сервер: ')+s.model);
- res.json({ready:sources.length>0,models,message:sources.length?
-   'Доступно локальных моделей: '+sources.length+'. Внешние API-ключи не нужны.':
-   'Нет доступных моделей. Запустите Ollama и скачайте модели или настройте локальный llama.cpp сервер.'});
+ const cloudModels=KEYLESS_CLOUD_ENABLED?ANONYMOUS_OVH_MODELS.map(m=>'OVHcloud: '+m):[];
+ const locals=await Promise.race([localSources(),new Promise(resolve=>setTimeout(()=>resolve([]),800))]);
+ const models=[...cloudModels,...locals.map(s=>(s.type==='ollama'?'Ollama: ':'Локальный сервер: ')+s.model)];
+ res.json({ready:models.length>0,models,provider:'keyless cloud + local + browser Puter.js',
+  message:KEYLESS_CLOUD_ENABLED?'Облачные ИИ без API-ключа добавлены. Доступность проверяется при генерации; лимиты провайдера сохраняются.':
+    (models.length?'Подключены локальные модели':'Серверной модели нет; в браузере доступен резервный ИИ.')});
 });
 app.get('/api/chats',userAuth,(req,res)=>res.json({chats:store.chats.filter(c=>c.userId===req.user.id).sort((a,b)=>b.updated-a.updated).map(({id,title,updated})=>({id,title,updated}))}));
 app.post('/api/chats',userAuth,async(req,res,next)=>{try{const c={id:id(),userId:req.user.id,title:'Новый чат',updated:clock(),messages:[]};store.chats.push(c);await persist();res.json({chat:c})}catch(e){next(e)}});
@@ -171,7 +182,7 @@ app.post('/api/chats/:id/browser-reply',userAuth,async(req,res,next)=>{
   const content=String(req.body.answer||'').trim();
   const model=String(req.body.model||'');
   if(!content||content.length>24000)return fail(res,400,'Некорректный ответ браузерной модели.');
-  if(!['Qwen 2.5 (браузер)','SmolLM2 (браузер)'].includes(model))
+  if(!['Qwen 2.5 (браузер)','SmolLM2 (браузер)','Puter GPT-5.4 nano','Puter Gemini Flash Lite','Puter Gemini 2.5 Flash'].includes(model))
    return fail(res,400,'Неизвестная браузерная модель.');
   const message={id:id(),role:'assistant',content,replyTo:last.id,model,at:clock()};
   c.messages.push(message);c.messages=c.messages.slice(-120);c.updated=clock();
@@ -185,21 +196,20 @@ app.post('/api/chats/:id/reply',userAuth,async(req,res,next)=>{
   if(!last)return fail(res,400,'Сначала отправьте сообщение');
   const previous=c.messages.find(m=>m.replyTo===last.id);
   if(previous)return res.json({message:previous});
-  const sources=await localSources();
-  if(!sources.length)return fail(res,503,'Локальный ИИ не запущен. Установите Ollama и скачайте модели. Сообщение сохранено.');
+  // No installation or API key is required for the default anonymous cloud route.
   const sys=last.mode==='code'
    ?'Ты Malik GPT, помощник по программированию. Отвечай по-русски. Если просят файлы, предоставляй ПОЛНЫЙ код каждого файла в отдельных Markdown блоках с именем: html filename=index.html, css filename=style.css, js filename=script.js. Не утверждай, что создал файлы на устройстве, если не создавал.'
    :'Ты Malik GPT, полезный русскоязычный помощник. Не выдумывай действия или инструменты.';
   const messages=[{role:'system',content:sys},...c.messages.slice(-20).map(m=>({role:m.role,content:m.content}))];
   let reason='Модели не ответили';
-  for(const source of sources){
-   const ctrl=new AbortController(),timer=setTimeout(()=>ctrl.abort(),60000);
-   const modelLabel=(source.type==='ollama'?'Ollama: ':'Локальный сервер: ')+source.model;
+  for await(const source of aiFallbackSources()){
+   const ctrl=new AbortController(),timer=setTimeout(()=>ctrl.abort(),source.type==='ovh-anonymous'?16000:60000);
+   const modelLabel=(source.type==='ovh-anonymous'?'OVHcloud: ':source.type==='ollama'?'Ollama: ':'Локальный сервер: ')+source.model;
    try{
-    const endpoint=source.type==='ollama'?source.base+'/api/chat':source.base+'/chat/completions';
+    const endpoint=source.type==='ovh-anonymous'?source.base:source.type==='ollama'?source.base+'/api/chat':source.base+'/chat/completions';
     const body=source.type==='ollama'
       ?{model:source.model,stream:false,messages,options:{num_predict:last.mode==='code'?2400:1400}}
-      :{model:source.model,stream:false,messages,max_tokens:last.mode==='code'?2400:1400};
+      :{model:source.model,stream:false,messages,max_tokens:last.mode==='code'?1600:1000};
     const response=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},
       signal:ctrl.signal,body:JSON.stringify(body)});
     if(!response.ok){reason=modelLabel+' ответил HTTP '+response.status;await response.body?.cancel().catch(()=>{});continue}
@@ -213,7 +223,7 @@ app.post('/api/chats/:id/reply',userAuth,async(req,res,next)=>{
    }catch(e){reason=modelLabel+': '+(e.name==='AbortError'?'превышено время ответа':'ошибка связи');}
    finally{clearTimeout(timer)}
   }
-  return fail(res,503,'Все локальные модели недоступны. '+reason+'. Вопрос сохранён.');
+  return fail(res,503,'Облачные ИИ без ключа и локальные модели не ответили. '+reason+'. Вопрос сохранён; браузер попробует запасной Puter.js.');
  }catch(e){next(e)}
 });
 
