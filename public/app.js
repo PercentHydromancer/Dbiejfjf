@@ -109,7 +109,7 @@ async function refreshAI(){
  try {
   const status=await request('/ai-status');
   const badge=$('#aiBadge');badge.className='status '+(status.ready?'ready':'bad');
-  badge.textContent=status.ready?'● '+status.models[0]:'● Ollama недоступна';
+  badge.textContent=status.ready?'● '+status.models[0]:'● Нет локальной модели';
   badge.title=status.message;
  }catch{$('#aiBadge').textContent='Нет связи'}
 }
