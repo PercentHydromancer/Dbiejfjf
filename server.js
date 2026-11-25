@@ -157,6 +157,27 @@ app.get('/api/chats/:id',userAuth,(req,res)=>{const c=owned(req,res);if(c)res.js
 app.patch('/api/chats/:id',userAuth,async(req,res,next)=>{try{const c=owned(req,res);if(!c)return;const title=String(req.body.title||'').trim().slice(0,80);if(!title)return fail(res,400,'Введите название');c.title=title;await persist();res.json({chat:c})}catch(e){next(e)}});
 app.delete('/api/chats/:id',userAuth,async(req,res,next)=>{try{const c=owned(req,res);if(!c)return;store.chats=store.chats.filter(x=>x.id!==c.id);await persist();res.json({ok:true})}catch(e){next(e)}});
 app.post('/api/chats/:id/messages',userAuth,async(req,res,next)=>{try{const c=owned(req,res);if(!c)return;const text=String(req.body.text||'').trim();if(!text||text.length>12000)return fail(res,400,'Сообщение должно быть от 1 до 12 000 символов');const m={id:id(),role:'user',content:text,mode:req.body.mode==='code'?'code':'chat',at:clock()};c.messages.push(m);c.messages=c.messages.slice(-120);if(c.title==='Новый чат')c.title=text.slice(0,54);c.updated=clock();await persist();res.json({message:m})}catch(e){next(e)}});
+// Persist a real response generated on the user's own device.
+// No external API key, no server-side inference or pretend model response.
+app.post('/api/chats/:id/browser-reply',userAuth,async(req,res,next)=>{
+ try{
+  const c=owned(req,res);if(!c)return;
+  const last=[...c.messages].reverse().find(m=>m.role==='user');
+  if(!last||last.voice)return fail(res,400,'Нет текстового сообщения для ответа.');
+  const replyTo=String(req.body.replyTo||'');
+  if(last.id!==replyTo)return fail(res,409,'Чат изменился. Повтори ответ на последнее сообщение.');
+  const previous=c.messages.find(m=>m.replyTo===last.id);
+  if(previous)return res.json({message:previous});
+  const content=String(req.body.answer||'').trim();
+  const model=String(req.body.model||'');
+  if(!content||content.length>24000)return fail(res,400,'Некорректный ответ браузерной модели.');
+  if(!['Qwen 2.5 (браузер)','SmolLM2 (браузер)'].includes(model))
+   return fail(res,400,'Неизвестная браузерная модель.');
+  const message={id:id(),role:'assistant',content,replyTo:last.id,model,at:clock()};
+  c.messages.push(message);c.messages=c.messages.slice(-120);c.updated=clock();
+  await persist();res.json({message});
+ }catch(e){next(e)}
+});
 app.post('/api/chats/:id/reply',userAuth,async(req,res,next)=>{
  try{
   const c=owned(req,res);if(!c)return;
