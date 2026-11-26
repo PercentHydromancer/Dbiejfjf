@@ -56,8 +56,8 @@ async function processTask({id,messages,mode,language='auto'}){
    }
    const languageRule=language==='ce'?'Отвечай на чеченском (нохчийн мотт), чеченской кириллицей.':language==='ru'?'Отвечай по-русски.':'Определи, пишет пользователь по-чеченски или по-русски, и отвечай на том же языке; перевод выполняй по запросу.';
    const system=(mode==='code'?
-    'Ты Malik GPT. Давай реальный полный код в блоках Markdown с именами файлов. Не выдумывай действия.':
-    'Ты Malik GPT, помощник на чеченском и русском языках. Отвечай полезно и честно.')+' '+languageRule;
+    'Ты Чеченский GPT. Давай реальный полный код в блоках Markdown с именами файлов. Не выдумывай действия.':
+    'Ты Чеченский GPT, помощник на чеченском и русском языках. Отвечай полезно и честно.')+' '+languageRule;
    const dialog=[{role:'system',content:system},...messages.slice(-8).filter(m=>['user','assistant'].includes(m.role)).map(m=>({role:m.role,content:String(m.content||'').slice(0,2500)}))];
    send(id,'progress',{message:'Модель '+model.name+' отвечает на устройстве…'});
    const result=await loaded.generator(dialog,{max_new_tokens:mode==='code'?280:160,do_sample:false});
