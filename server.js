@@ -224,7 +224,7 @@ async function askSource(source,messages,mode,signal){
    body={model:source.model,stream:false,messages,max_tokens:mode==='code'?1600:900};
   }
   const response=await fetch(endpoint,{method:'POST',headers,body:JSON.stringify(body),signal:controller.signal});
-  if(!response.ok){await response.body?.cancel().catch(()=>{});throw Error('Provider HTTP '+response.status)}
+  if(!response.ok){await response.body?.cancel().catch(()=>{});throw Error('HTTP '+response.status)}
   const data=await response.json();
   const content=isGemini?data.candidates?.[0]?.content?.parts?.filter(p=>typeof p.text==='string').map(p=>p.text).join(''):data.choices?.[0]?.message?.content;
   const answer=typeof content==='string'?content.trim():Array.isArray(content)?content.filter(x=>x?.type==='text').map(x=>x.text||'').join('\n').trim():'';
@@ -233,11 +233,13 @@ async function askSource(source,messages,mode,signal){
  }finally{clearTimeout(timer);signal?.removeEventListener('abort',abort)}
 }
 async function firstAvailable(sources,messages,mode){
- if(!sources.length)throw Error('Нет подключённых моделей');
+ if(!sources.length)throw Error('NO_PROVIDERS');
  const controller=new AbortController();
  try{
-  const result=await Promise.any(sources.map(source=>askSource(source,messages,mode,controller.signal)));
-  return result;
+  return await Promise.any(sources.map(source=>askSource(source,messages,mode,controller.signal).catch(error=>{
+   const code=String(error?.message||error).match(/HTTP (\\d{3})/)?.[1]||(error?.name==='AbortError'?'timeout':'network');
+   throw Error(source.type+':'+code);
+  })));
  }finally{controller.abort()}
 }
 app.get('/api/ai-status',userAuth,(_req,res)=>{
@@ -291,8 +293,13 @@ app.post('/api/chats/:id/reply',userAuth,async(req,res,next)=>{
    :'Ты Чеченский GPT, полезный помощник, знающий русский и чеченский языки. Не выдумывай действия или инструменты.')+' '+languageInstruction;
   const messages=[{role:'system',content:sys},...c.messages.slice(-20).map(m=>({role:m.role,content:m.content}))];
   let output=null;
-  try{output=await firstAvailable(cloudProviders(),messages,last.mode)}catch{}
-  if(!output)return fail(res,503,'Все ИИ временно недоступны. Подключи бесплатный ключ Gemini, Groq или OpenRouter в Render → Environment.');
+  try{output=await firstAvailable(cloudProviders(),messages,last.mode)}catch(error){
+   const detail=error instanceof AggregateError?error.errors.map(e=>String(e.message)).join(', '):String(error.message||error);
+   console.warn('AI provider failures:',detail);
+   const configured=['GEMINI_API_KEY','GROQ_API_KEY','OPENROUTER_API_KEY'].filter(k=>Boolean(process.env[k]));
+   const publicMessage=configured.length===0?'На сервере не настроен ни один API-ключ. Проверь Environment в Render и перезапусти сервис.':'ИИ не ответил. Диагностика: '+detail+'. HTTP 401/403 — доступ или ключ; 429 — лимит; 404 — модель или адрес.';
+   return fail(res,503,publicMessage);
+  }
   // A single successful response is stored, regardless of how many providers were queried.
   const existing=c.messages.find(m=>m.replyTo===last.id);
   if(existing)return res.json({message:existing});
