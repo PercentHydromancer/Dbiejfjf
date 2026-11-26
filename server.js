@@ -257,7 +257,7 @@ function owned(req,res){const c=store.chats.find(c=>c.id===req.params.id&&c.user
 app.get('/api/chats/:id',userAuth,(req,res)=>{const c=owned(req,res);if(c)res.json({chat:c})});
 app.patch('/api/chats/:id',userAuth,async(req,res,next)=>{try{const c=owned(req,res);if(!c)return;const title=String(req.body.title||'').trim().slice(0,80);if(!title)return fail(res,400,'Введите название');c.title=title;await persist();res.json({chat:c})}catch(e){next(e)}});
 app.delete('/api/chats/:id',userAuth,async(req,res,next)=>{try{const c=owned(req,res);if(!c)return;store.chats=store.chats.filter(x=>x.id!==c.id);await persist();res.json({ok:true})}catch(e){next(e)}});
-app.post('/api/chats/:id/messages',userAuth,async(req,res,next)=>{try{const c=owned(req,res);if(!c)return;const text=String(req.body.text||'').trim();if(!text||text.length>12000)return fail(res,400,'Сообщение должно быть от 1 до 12 000 символов');const m={id:id(),role:'user',content:text,mode:req.body.mode==='code'?'code':'chat',at:clock()};c.messages.push(m);billing.recordMessage(req.user);c.messages=c.messages.slice(-120);if(c.title==='Новый чат')c.title=text.slice(0,54);c.updated=clock();await persist();res.json({message:m})}catch(e){next(e)}});
+app.post('/api/chats/:id/messages',userAuth,async(req,res,next)=>{try{const c=owned(req,res);if(!c)return;const text=String(req.body.text||'').trim();if(!text||text.length>12000)return fail(res,400,'Сообщение должно быть от 1 до 12 000 символов');const language=['auto','ru','ce'].includes(req.body.language)?req.body.language:'auto';const m={id:id(),role:'user',content:text,mode:req.body.mode==='code'?'code':'chat',language,at:clock()};c.messages.push(m);billing.recordMessage(req.user);c.messages=c.messages.slice(-120);if(c.title==='Новый чат')c.title=text.slice(0,54);c.updated=clock();await persist();res.json({message:m})}catch(e){next(e)}});
 // Persist a real response generated on the user's own device.
 // No external API key, no server-side inference or pretend model response.
 app.post('/api/chats/:id/browser-reply',userAuth,async(req,res,next)=>{
@@ -287,9 +287,14 @@ app.post('/api/chats/:id/reply',userAuth,async(req,res,next)=>{
   const previous=c.messages.find(m=>m.replyTo===last.id);
   if(previous)return res.json({message:previous});
   // No installation or API key is required for the default anonymous cloud route.
-  const sys=last.mode==='code'
-   ?'Ты Malik GPT, помощник по программированию. Отвечай по-русски. Если просят файлы, предоставляй ПОЛНЫЙ код каждого файла в отдельных Markdown блоках с именем: html filename=index.html, css filename=style.css, js filename=script.js. Не утверждай, что создал файлы на устройстве, если не создавал.'
-   :'Ты Malik GPT, полезный русскоязычный помощник. Не выдумывай действия или инструменты.';
+  const languageInstruction=last.language==='ce'
+   ?'Отвечай только на чеченском языке (нохчийн мотт), используя чеченскую кириллицу. Русский используй только по явной просьбе для перевода или цитаты.'
+   :last.language==='ru'
+    ?'Отвечай по-русски, если пользователь явно не просит перевод.'
+    :'Определи язык ПОСЛЕДНЕГО пользовательского сообщения: чеченский (нохчийн мотт) или русский. Отвечай на том же языке. Если пользователь просит перевод, переводи на указанный язык. При сомнении не выдумывай чеченские слова и честно уточняй значение.';
+  const sys=(last.mode==='code'
+   ?'Ты Malik GPT, помощник по программированию. Если просят файлы, предоставляй ПОЛНЫЙ код каждого файла в отдельных Markdown блоках с именем: html filename=index.html, css filename=style.css, js filename=script.js. Не утверждай, что создал файлы на устройстве, если не создавал.'
+   :'Ты Malik GPT, полезный помощник, знающий русский и чеченский языки. Не выдумывай действия или инструменты.')+' '+languageInstruction;
   const messages=[{role:'system',content:sys},...c.messages.slice(-20).map(m=>({role:m.role,content:m.content}))];
   let output=null;
   try{
