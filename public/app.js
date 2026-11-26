@@ -178,7 +178,7 @@ let browserTaskNumber=0;
 async function getBrowserAIResponse(messages,mode){
  if(typeof Worker==='undefined')throw Error('Этот браузер не поддерживает запуск локального ИИ.');
  // Run heavy model computations away from the UI thread.
- if(!browserAIWorker)browserAIWorker=new Worker('/browser-ai-worker.js?v=1',{type:'module'});
+ if(!browserAIWorker)browserAIWorker=new Worker('/browser-ai-worker.js?v=2',{type:'module'});
  const worker=browserAIWorker,id=++browserTaskNumber;
  return new Promise((resolve,reject)=>{
   const receive=event=>{
