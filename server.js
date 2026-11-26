@@ -111,7 +111,7 @@ app.get('/api/me',userAuth,async(req,res,next)=>{
   res.json({user:userView(req.user)});
  }catch(e){next(e)}
 });
-app.get('/api/health',(_req,res)=>res.json({ok:true,service:'Malik GPT',storage:pool?'PostgreSQL':'local-file'}));
+app.get('/api/health',(_req,res)=>res.json({ok:true,service:'Чеченский GPT',storage:pool?'PostgreSQL':'local-file'}));
 
 // Separate administrator session. No credentials or secret default is committed.
 const adminConfigured=()=>Boolean(process.env.ADMIN_LOGIN&&process.env.ADMIN_PASSWORD&&process.env.ADMIN_PASSWORD.length>=12);
@@ -191,22 +191,22 @@ async function localSources(){
  }
  return sources;
 }
-// Anonymous providers do not require Malik GPT users to create extra accounts.
+// Anonymous providers do not require Чеченский GPT users to create extra accounts.
 // Provider access is best-effort and may be rate-limited or discontinued.
 const KEYLESS_CLOUD_ENABLED=process.env.KEYLESS_CLOUD_ENABLED!=='false';
 const ANONYMOUS_OVH_URL='https://oai.endpoints.kepler.ai.cloud.ovh.net/v1/chat/completions';
-const ANONYMOUS_OVH_MODELS=['Olala-v1.0-mini-7A1B','Olala-v1.0-summarise'];
+// Anonymous, best-effort endpoints: no user key or account, limited by providers.
 const cloudProviders=()=>KEYLESS_CLOUD_ENABLED?[
- {type:'llm7',model:'gpt-4.1-nano-2025-04-14',base:'https://api.llm7.io/v1/chat/completions'},
- {type:'pollinations',model:'openai',base:'https://text.pollinations.ai/openai/chat/completions'},
- ...ANONYMOUS_OVH_MODELS.map(model=>({type:'ovh-anonymous',model,base:ANONYMOUS_OVH_URL}))
+ {type:'llm7',model:'gpt-oss:20b',base:'https://api.llm7.io/v1/chat/completions'},
+ {type:'ovh-anonymous',model:'Olala-v1.0-mini-7A1B',base:ANONYMOUS_OVH_URL},
+ {type:'ovh-anonymous',model:'Olala-v1.0-summarize',base:ANONYMOUS_OVH_URL}
 ]:[];
 const providerLabel=source=>({
  llm7:'LLM7',pollinations:'Pollinations','ovh-anonymous':'OVHcloud',
  ollama:'Ollama','openai-local':'Локальный сервер'
 }[source.type]||'ИИ')+': '+source.model;
 async function askSource(source,messages,mode,signal){
- const timeout=source.type==='ollama'||source.type==='openai-local'?18000:10500;
+ const timeout=source.type==='ollama'||source.type==='openai-local'?18000:8500;
  const controller=new AbortController();
  const abort=()=>controller.abort();
  signal?.addEventListener('abort',abort,{once:true});
@@ -218,7 +218,7 @@ async function askSource(source,messages,mode,signal){
    ?{model:source.model,stream:false,messages,options:{num_predict:mode==='code'?1800:900}}
    :{model:source.model,stream:false,messages,max_tokens:mode==='code'?1600:900};
   const headers={'Content-Type':'application/json'};
-  if(source.type==='llm7')headers.Authorization='Bearer unused';
+  // Anonymous requests should not send fake authorization tokens.
   const response=await fetch(endpoint,{method:'POST',headers,body:JSON.stringify(body),signal:controller.signal});
   if(!response.ok){
    await response.body?.cancel().catch(()=>{});
@@ -293,8 +293,8 @@ app.post('/api/chats/:id/reply',userAuth,async(req,res,next)=>{
     ?'Отвечай по-русски, если пользователь явно не просит перевод.'
     :'Определи язык ПОСЛЕДНЕГО пользовательского сообщения: чеченский (нохчийн мотт) или русский. Отвечай на том же языке. Если пользователь просит перевод, переводи на указанный язык. При сомнении не выдумывай чеченские слова и честно уточняй значение.';
   const sys=(last.mode==='code'
-   ?'Ты Malik GPT, помощник по программированию. Если просят файлы, предоставляй ПОЛНЫЙ код каждого файла в отдельных Markdown блоках с именем: html filename=index.html, css filename=style.css, js filename=script.js. Не утверждай, что создал файлы на устройстве, если не создавал.'
-   :'Ты Malik GPT, полезный помощник, знающий русский и чеченский языки. Не выдумывай действия или инструменты.')+' '+languageInstruction;
+   ?'Ты Чеченский GPT, помощник по программированию. Если просят файлы, предоставляй ПОЛНЫЙ код каждого файла в отдельных Markdown блоках с именем: html filename=index.html, css filename=style.css, js filename=script.js. Не утверждай, что создал файлы на устройстве, если не создавал.'
+   :'Ты Чеченский GPT, полезный помощник, знающий русский и чеченский языки. Не выдумывай действия или инструменты.')+' '+languageInstruction;
   const messages=[{role:'system',content:sys},...c.messages.slice(-20).map(m=>({role:m.role,content:m.content}))];
   let output=null;
   try{
@@ -384,4 +384,4 @@ app.use(express.static(path.join(root,'public')));
 app.use('/api',(_req,res)=>fail(res,404,'Маршрут не найден'));
 app.use((err,req,res,next)=>{console.error(err);fail(res,500,'Ошибка сервера')});
 await initializeStore();
-app.listen(Number(process.env.PORT||3000),'0.0.0.0',()=>console.log('Malik GPT started'+(pool?' with PostgreSQL':' with local file storage')));
+app.listen(Number(process.env.PORT||3000),'0.0.0.0',()=>console.log('Чеченский GPT started'+(pool?' with PostgreSQL':' with local file storage')));
