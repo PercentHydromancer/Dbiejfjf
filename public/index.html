@@ -4,15 +4,15 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="theme-color" content="#ffffff">
-<title>Malik GPT</title>
-<link rel="stylesheet" href="/styles.css?v=ui-5">
-<script src="/app.js?v=ui-5" defer></script>
-<script src="/plans.js?v=ui-5" defer></script>
+<title>Чеченский GPT</title>
+<link rel="stylesheet" href="/styles.css?v=ui-6">
+<script src="/app.js?v=ui-6" defer></script>
+<script src="/plans.js?v=ui-6" defer></script>
 </head>
 <body>
 <div id="auth" class="auth-shell">
  <div class="auth-panel">
-  <div class="brand-big"><span class="logo">✦</span> Malik GPT</div>
+  <div class="brand-big"><span class="logo">✦</span> Чеченский GPT</div>
   <h1 id="authTitle">Добро пожаловать</h1>
   <p>Твой личный ИИ-помощник</p>
   <form id="authForm" class="auth-form">
@@ -27,7 +27,7 @@
 </div>
 <div id="app" class="layout" hidden>
  <aside class="sidebar" id="sidebar">
-  <div class="sidebar-head"><div class="brand"><span class="logo">✦</span> Malik GPT</div><button class="icon-btn hide-desktop" id="closeSidebar" type="button" aria-label="Закрыть">×</button></div>
+  <div class="sidebar-head"><div class="brand"><span class="logo">✦</span> Чеченский GPT</div><button class="icon-btn hide-desktop" id="closeSidebar" type="button" aria-label="Закрыть">×</button></div>
   <button class="side-main" id="newChat" type="button"><span>✎</span> Новый чат</button>
   <button class="side-main" id="openBuilder" type="button"><span>⌘</span> Создать файлы</button>
   <button class="side-main" id="openPlans" type="button"><span>◇</span> Тарифы</button>
@@ -41,13 +41,13 @@
  </aside>
  <div id="scrim" class="scrim" hidden></div>
  <main class="main">
-  <header class="topbar"><div class="top-left"><button id="menu" class="icon-btn hide-desktop" type="button" aria-label="Открыть меню">☰</button><strong>Malik GPT</strong><button id="headerPlans" class="header-plans" type="button">◇ Тарифы</button></div><button id="billingBadge" class="billing-badge" type="button" hidden>Free</button><button id="aiBadge" class="status" type="button">Проверка модели…</button></header>
+  <header class="topbar"><div class="top-left"><button id="menu" class="icon-btn hide-desktop" type="button" aria-label="Открыть меню">☰</button><strong>Чеченский GPT</strong><button id="headerPlans" class="header-plans" type="button">◇ Тарифы</button></div><button id="billingBadge" class="billing-badge" type="button" hidden>Free</button><button id="aiBadge" class="status" type="button">Проверка модели…</button></header>
   <div id="welcome" class="welcome"><div class="hero-logo">✦</div><h1>С чего начнём?</h1><p>Общение, программирование и готовые файлы — в одном месте.</p><div class="suggestions"><button data-prompt="Объясни простыми словами, как работает искусственный интеллект." type="button">Объясни интересную тему</button><button data-prompt="Создай красивый одностраничный сайт. Дай полные index.html, style.css и script.js." type="button">Создай сайт</button><button data-prompt="Напиши программу на Python для учёта задач. Дай полный файл main.py." type="button">Напиши код на Python</button></div></div>
   <div id="messages" class="messages" aria-live="polite" hidden></div>
   <div class="composer-region">
    <p id="notice" class="notice" role="status" hidden></p>
    <form id="composer" class="composer">
-    <textarea id="prompt" rows="1" maxlength="12000" placeholder="Спроси Malik GPT…" required></textarea>
+    <textarea id="prompt" rows="1" maxlength="12000" placeholder="Спроси Чеченский GPT…" required></textarea>
     <div class="composer-bottom">
     <div class="composer-left">
       <button id="plusTools" class="plus-button" type="button" aria-label="Инструменты" aria-expanded="false">＋</button>
@@ -57,6 +57,7 @@
         <button id="plusNotes" type="button">▤ Мои заметки</button>
         <button id="plusExport" type="button">↓ Скачать переписку</button>
         <button id="plusVoice" type="button">🎙 Записать голосовое</button>
+        <button id="localAiToggle" type="button">⚡ Локальный ИИ: выключен</button>
         <button id="plusDictate" type="button" hidden>🗣 Надиктовать вопрос</button>
       </div>
       <input id="localFile" type="file" accept=".txt,.md,.html,.css,.js,.json,.py,.csv,.sql,.xml,.yml,.yaml" hidden>
