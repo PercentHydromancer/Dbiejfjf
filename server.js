@@ -193,47 +193,44 @@ async function localSources(){
 }
 // Anonymous providers do not require Чеченский GPT users to create extra accounts.
 // Provider access is best-effort and may be rate-limited or discontinued.
+
 const KEYLESS_CLOUD_ENABLED=process.env.KEYLESS_CLOUD_ENABLED!=='false';
-const ANONYMOUS_OVH_URL='https://oai.endpoints.kepler.ai.cloud.ovh.net/v1/chat/completions';
-// Anonymous, best-effort endpoints: no user key or account, limited by providers.
-const cloudProviders=()=>KEYLESS_CLOUD_ENABLED?[
- {type:'llm7',model:'gpt-oss:20b',base:'https://api.llm7.io/v1/chat/completions'},
- {type:'ovh-anonymous',model:'Olala-v1.0-mini-7A1B',base:ANONYMOUS_OVH_URL},
- {type:'ovh-anonymous',model:'Olala-v1.0-summarize',base:ANONYMOUS_OVH_URL}
-]:[];
-const providerLabel=source=>({
- llm7:'LLM7',pollinations:'Pollinations','ovh-anonymous':'OVHcloud',
- ollama:'Ollama','openai-local':'Локальный сервер'
-}[source.type]||'ИИ')+': '+source.model;
+const cloudProviders=()=>{
+ const p=[];
+ if(process.env.GEMINI_API_KEY)p.push({type:'gemini',model:process.env.GEMINI_MODEL||'gemini-2.5-flash',key:process.env.GEMINI_API_KEY});
+ if(process.env.GROQ_API_KEY)p.push({type:'groq',model:process.env.GROQ_MODEL||'openai/gpt-oss-120b',key:process.env.GROQ_API_KEY,base:'https://api.groq.com/openai/v1/chat/completions'});
+ if(process.env.OPENROUTER_API_KEY)p.push({type:'openrouter',model:process.env.OPENROUTER_MODEL||'openrouter/free',key:process.env.OPENROUTER_API_KEY,base:'https://openrouter.ai/api/v1/chat/completions'});
+ if(KEYLESS_CLOUD_ENABLED)p.push({type:'llm7',model:'gpt-4.1-nano-2025-04-14',base:'https://api.llm7.io/v1/chat/completions'});
+ return p;
+};
+const providerLabel=source=>({gemini:'Google Gemini',groq:'Groq',openrouter:'OpenRouter',llm7:'LLM7'}[source.type]||'ИИ')+': '+source.model;
 async function askSource(source,messages,mode,signal){
- const timeout=source.type==='ollama'||source.type==='openai-local'?18000:8500;
  const controller=new AbortController();
  const abort=()=>controller.abort();
  signal?.addEventListener('abort',abort,{once:true});
- const timer=setTimeout(abort,timeout);
+ const timer=setTimeout(abort,source.key?16000:8000);
  try{
-  const endpoint=source.type==='ollama'?source.base+'/api/chat':
-   source.type==='openai-local'?source.base+'/chat/completions':source.base;
-  const body=source.type==='ollama'
-   ?{model:source.model,stream:false,messages,options:{num_predict:mode==='code'?1800:900}}
-   :{model:source.model,stream:false,messages,max_tokens:mode==='code'?1600:900};
+  const isGemini=source.type==='gemini';
+  const endpoint=isGemini?'https://generativelanguage.googleapis.com/v1beta/models/'+encodeURIComponent(source.model)+':generateContent':source.base;
   const headers={'Content-Type':'application/json'};
-  // Anonymous requests should not send fake authorization tokens.
-  const response=await fetch(endpoint,{method:'POST',headers,body:JSON.stringify(body),signal:controller.signal});
-  if(!response.ok){
-   await response.body?.cancel().catch(()=>{});
-   throw Error('HTTP '+response.status);
+  let body;
+  if(isGemini){
+   headers['x-goog-api-key']=source.key;
+   const system=messages.find(m=>m.role==='system')?.content||'';
+   const contents=messages.filter(m=>m.role==='user'||m.role==='assistant').map(m=>({role:m.role==='assistant'?'model':'user',parts:[{text:String(m.content||'')}]}));
+   body={systemInstruction:{parts:[{text:system}]},contents,generationConfig:{maxOutputTokens:mode==='code'?2100:1200}};
+  }else{
+   if(source.key)headers.Authorization='Bearer '+source.key;
+   body={model:source.model,stream:false,messages,max_tokens:mode==='code'?1600:900};
   }
+  const response=await fetch(endpoint,{method:'POST',headers,body:JSON.stringify(body),signal:controller.signal});
+  if(!response.ok){await response.body?.cancel().catch(()=>{});throw Error('Provider HTTP '+response.status)}
   const data=await response.json();
-  const content=source.type==='ollama'?data.message?.content:data.choices?.[0]?.message?.content;
-  const answer=typeof content==='string'?content.trim():
-   Array.isArray(content)?content.filter(x=>x?.type==='text').map(x=>x.text||'').join('\n').trim():'';
+  const content=isGemini?data.candidates?.[0]?.content?.parts?.filter(p=>typeof p.text==='string').map(p=>p.text).join(''):data.choices?.[0]?.message?.content;
+  const answer=typeof content==='string'?content.trim():Array.isArray(content)?content.filter(x=>x?.type==='text').map(x=>x.text||'').join('\n').trim():'';
   if(!answer)throw Error('Пустой ответ');
   return {answer,model:providerLabel(source)};
- }finally{
-  clearTimeout(timer);
-  signal?.removeEventListener('abort',abort);
- }
+ }finally{clearTimeout(timer);signal?.removeEventListener('abort',abort)}
 }
 async function firstAvailable(sources,messages,mode){
  if(!sources.length)throw Error('Нет подключённых моделей');
@@ -243,12 +240,9 @@ async function firstAvailable(sources,messages,mode){
   return result;
  }finally{controller.abort()}
 }
-app.get('/api/ai-status',userAuth,async(_req,res)=>{
- const cloud=cloudProviders().map(providerLabel);
- const locals=await Promise.race([localSources(),new Promise(resolve=>setTimeout(()=>resolve([]),800))]);
- const models=[...cloud,...locals.map(providerLabel)];
- res.json({ready:models.length>0,models,provider:'anonymous-cloud + local + device',
-  message:'Без дополнительной регистрации. Облачные источники имеют общие лимиты и могут временно не отвечать.'});
+app.get('/api/ai-status',userAuth,(_req,res)=>{
+ const models=cloudProviders().map(providerLabel);
+ res.json({ready:models.length>0,models,provider:'cloud-only',message:'Облачные ИИ без загрузки модели на телефон. Лимиты и доступность зависят от провайдера.'});
 });
 
 app.get('/api/chats',userAuth,(req,res)=>res.json({chats:store.chats.filter(c=>c.userId===req.user.id).sort((a,b)=>b.updated-a.updated).map(({id,title,updated})=>({id,title,updated}))}));
@@ -297,14 +291,8 @@ app.post('/api/chats/:id/reply',userAuth,async(req,res,next)=>{
    :'Ты Чеченский GPT, полезный помощник, знающий русский и чеченский языки. Не выдумывай действия или инструменты.')+' '+languageInstruction;
   const messages=[{role:'system',content:sys},...c.messages.slice(-20).map(m=>({role:m.role,content:m.content}))];
   let output=null;
-  try{
-   // Try several independent keyless clouds concurrently rather than waiting 16s per model.
-   output=await firstAvailable(cloudProviders(),messages,last.mode);
-  }catch{
-   const local=await Promise.race([localSources(),new Promise(resolve=>setTimeout(()=>resolve([]),1200))]);
-   try{output=await firstAvailable(local.slice(0,3),messages,last.mode)}catch{}
-  }
-  if(!output)return fail(res,503,'Все бесплатные ИИ сейчас заняты или недоступны. Попробуй повторить запрос позднее.');
+  try{output=await firstAvailable(cloudProviders(),messages,last.mode)}catch{}
+  if(!output)return fail(res,503,'Все ИИ временно недоступны. Подключи бесплатный ключ Gemini, Groq или OpenRouter в Render → Environment.');
   // A single successful response is stored, regardless of how many providers were queried.
   const existing=c.messages.find(m=>m.replyTo===last.id);
   if(existing)return res.json({message:existing});
