@@ -202,7 +202,7 @@ const cloudProviders=()=>{
  const p=[];
  // Run your own OpenAI-compatible LLM at a private server URL.
  if(process.env.SELF_HOSTED_AI_URL){
-  const base=process.env.SELF_HOSTED_AI_URL.trim().replace(/\\/+$/,'');
+  const base=process.env.SELF_HOSTED_AI_URL.trim().replace(/\/+$/,'');
   if(/^https:\/\//.test(base)){
    p.push({type:'selfhosted',model:process.env.SELF_HOSTED_AI_MODEL||'local-model',
     key:process.env.SELF_HOSTED_AI_TOKEN||'',base:base.endsWith('/chat/completions')?base:base+'/v1/chat/completions'});
