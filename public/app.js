@@ -15,6 +15,15 @@ async function request(url,opts={}) {
  }
  return data;
 }
+function showThinking(){
+ const list=$('#messages');if(!list||list.hidden)return;
+ $('#thinkingMessage')?.remove();
+ const row=document.createElement('div');row.id='thinkingMessage';row.className='message assistant thinking';
+ const label=document.createElement('div');label.className='message-label';label.textContent='✦ Чеченский GPT';
+ const bubble=document.createElement('div');bubble.className='message-bubble';bubble.textContent=languageChoice()==='ru'?'Думаю…':'Ойлаш ву…';
+ const dots=document.createElement('span');dots.className='thinking-dots';dots.textContent=' ● ● ●';bubble.append(dots);row.append(label,bubble);list.append(row);scrollMessages();
+}
+function hideThinking(){$('#thinkingMessage')?.remove()}
 function notice(msg) {const el=$('#notice');el.textContent=msg||'';el.hidden=!msg}
 function showApp(user) {
  state.user=user;$('#username').textContent=user.name;$('.user-circle').textContent=user.name[0].toUpperCase();
@@ -99,10 +108,11 @@ function showCode(messageBubble,text) {
  if(files.length>1)messageBubble.append(button('📦 Скачать проект ZIP',()=>downloadZip(files),'download-all'));
 }
 function render(m){
+ if(m.role==='assistant')hideThinking();
  const row=document.createElement('div');row.className='message '+m.role;
  const bubble=document.createElement('div');bubble.className='message-bubble';
  if(m.role==='assistant'){
-  row.append(paragraph('✦ Malik GPT'+(m.model?' · '+m.model:''),'message-label'));
+  row.append(paragraph('✦ Чеченский GPT'+(m.model?' · '+m.model:''),'message-label'));
   showCode(bubble,m.content);
  }else if(m.voice){
   const caption=document.createElement('div');
@@ -210,7 +220,8 @@ async function generateReplyWithFallback(chatId){
  }catch(error){
   if(!state.user||/^(Сессия|Войдите|Требуется вход)/i.test(error.message))throw error;
   backendError=error.message;
-  notice('Пробую резервный ИИ на устройстве…');
+  if(localStorage.getItem('chechen-local-ai')!=='true')throw Error('Бесплатные облачные модели временно недоступны. Попробуй снова. Локальный ИИ можно включить в инструментах. '+backendError);
+  notice('Запускаю локальный ИИ на устройстве (первый запуск скачивает модель)…');
  }
  const {chat}=await request('/chats/'+encodeURIComponent(chatId));
  const last=[...chat.messages].reverse().find(m=>m.role==='user');
@@ -236,6 +247,7 @@ async function sendMessage(e){
   $('#prompt').value='';$('#prompt').style.height='';
   render({role:'user',content:text});
   await refreshChats();
+  showThinking();
   const message=await generateReplyWithFallback(chatId);
   if(state.chatId===chatId)render(message);
   window.MalikBilling?.refreshStatus();
@@ -243,7 +255,7 @@ async function sendMessage(e){
  }catch(error){
   notice(error.message);
   if(state.user&&state.chatId)showRetry();
- }finally{state.busy=false;$('#send').disabled=false}
+ }finally{hideThinking();state.busy=false;$('#send').disabled=false}
 }
 function showRetry(){
  const el=$('#notice');if(el.querySelector('button'))return;
@@ -252,12 +264,13 @@ function showRetry(){
   state.busy=true;retry.disabled=true;$('#send').disabled=true;
   const id=state.chatId;
   try{
+   showThinking();
    const message=await generateReplyWithFallback(id);
    notice('');
    const {chat}=await request('/chats/'+encodeURIComponent(id));
    if(state.chatId===id)view(chat);
   }catch(e){notice(e.message);showRetry()}
-  finally{state.busy=false;$('#send').disabled=false}
+  finally{hideThinking();state.busy=false;$('#send').disabled=false}
  },'mini-btn');
  el.append(document.createTextNode(' '),retry);
 }
@@ -392,7 +405,7 @@ async function exportChat(){
  try{
   const {chat}=await request('/chats/'+encodeURIComponent(state.chatId));
   const text=[chat.title,'',...chat.messages.map(m=>
-   (m.role==='user'?'Пользователь':'Malik GPT')+': '+(m.voice?'[Голосовое сообщение — аудиозапись хранится в чате]':m.content))].join('\n\n');
+   (m.role==='user'?'Пользователь':'Чеченский GPT')+': '+(m.voice?'[Голосовое сообщение — аудиозапись хранится в чате]':m.content))].join('\n\n');
   saveBlob(new Blob([text],{type:'text/plain;charset=utf-8'}),'malik-chat.txt');
  }catch(e){notice(e.message)}
 }
@@ -452,6 +465,9 @@ $('#logout').addEventListener('click',async()=>{
 });
 $('#language').value=['auto','ce','ru'].includes(localStorage.getItem('malik-language'))?localStorage.getItem('malik-language'):'auto';
 $('#language').addEventListener('change',()=>localStorage.setItem('malik-language',languageChoice()));
+const localToggle=$('#localAiToggle');
+function syncLocalToggle(){localToggle.textContent=localStorage.getItem('chechen-local-ai')==='true'?'⚡ Локальный ИИ: включён (медленнее)':'⚡ Локальный ИИ: выключен (быстрее)'}
+syncLocalToggle();localToggle.addEventListener('click',()=>{localStorage.setItem('chechen-local-ai',localStorage.getItem('chechen-local-ai')==='true'?'false':'true');syncLocalToggle();notice(localStorage.getItem('chechen-local-ai')==='true'?'Локальный ИИ будет резервом: при первом запуске загружается большая модель.':'Теперь ответы будут запрашиваться только у быстрых облачных моделей.')});
 $('#composer').addEventListener('submit',sendMessage);
 $('#prompt').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMessage()}});
 $('#prompt').addEventListener('input',e=>{e.target.style.height='auto';e.target.style.height=Math.min(e.target.scrollHeight,190)+'px'});
