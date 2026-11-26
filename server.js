@@ -2,6 +2,9 @@ import express from 'express';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import dns from 'node:dns';
+// Prefer IPv4 where IPv6 routing is unavailable on hosting providers.
+dns.setDefaultResultOrder('ipv4first');
 import pg from 'pg';
 import { installBilling } from './billing.js';
 import { fileURLToPath } from 'node:url';
@@ -237,7 +240,8 @@ async function firstAvailable(sources,messages,mode){
  const controller=new AbortController();
  try{
   return await Promise.any(sources.map(source=>askSource(source,messages,mode,controller.signal).catch(error=>{
-   const code=String(error?.message||error).match(/HTTP (\\d{3})/)?.[1]||(error?.name==='AbortError'?'timeout':'network');
+   const raw=String(error?.message||error);
+   const code=raw.match(/HTTP (\\d{3})/)?.[1]||(error?.name==='AbortError'?'timeout':String(error?.cause?.code||'network').replace(/[^A-Z0-9_]/g,'').slice(0,35));
    throw Error(source.type+':'+code);
   })));
  }finally{controller.abort()}
@@ -297,7 +301,9 @@ app.post('/api/chats/:id/reply',userAuth,async(req,res,next)=>{
    const detail=error instanceof AggregateError?error.errors.map(e=>String(e.message)).join(', '):String(error.message||error);
    console.warn('AI provider failures:',detail);
    const configured=['GEMINI_API_KEY','GROQ_API_KEY','OPENROUTER_API_KEY'].filter(k=>Boolean(process.env[k]));
-   const publicMessage=configured.length===0?'На сервере не настроен ни один API-ключ. Проверь Environment в Render и перезапусти сервис.':'ИИ не ответил. Диагностика: '+detail+'. HTTP 401/403 — доступ или ключ; 429 — лимит; 404 — модель или адрес.';
+   const aqKey=process.env.GEMINI_API_KEY?.startsWith('AQ.');
+   const hint=aqKey?' Ключ Gemini формата AQ. может не поддерживаться обычным REST API. Попробуй новый совместимый ключ или подключи Groq.':'';
+   const publicMessage=configured.length===0?'На сервере не настроен ни один API-ключ. Проверь Environment в Render и перезапусти сервис.':'ИИ не ответил. Диагностика: '+detail+'. HTTP 401/403 — доступ или ключ; 429 — лимит; 404 — модель или адрес; timeout — ожидание; ENOTFOUND — DNS.'+hint;
    return fail(res,503,publicMessage);
   }
   // A single successful response is stored, regardless of how many providers were queried.
