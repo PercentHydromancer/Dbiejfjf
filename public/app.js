@@ -16,7 +16,8 @@ async function request(url,opts={}) {
  return data;
 }
 function showThinking(){
- const list=$('#messages');if(!list||list.hidden)return;
+ const list=$('#messages');if(!list)return;
+ if(list.hidden){$('#welcome').hidden=true;list.hidden=false;}
  $('#thinkingMessage')?.remove();
  const row=document.createElement('div');row.id='thinkingMessage';row.className='message assistant thinking';
  const label=document.createElement('div');label.className='message-label';label.textContent='✦ Чеченский GPT';
@@ -86,7 +87,7 @@ function downloadZip(files) {
  const centralSize=centers.reduce((n,b)=>n+b.length,0),end=new Uint8Array(22),view=new DataView(end.buffer);
  view.setUint32(0,0x06054b50,true);view.setUint16(8,files.length,true);view.setUint16(10,files.length,true);
  view.setUint32(12,centralSize,true);view.setUint32(16,offset,true);
- saveBlob(new Blob([...parts,...centers,end],{type:'application/zip'}),'malik-gpt-project.zip');
+ saveBlob(new Blob([...parts,...centers,end],{type:'application/zip'}),'chechen-gpt-project.zip');
 }
 function showCode(messageBubble,text) {
  const files=parseFiles(text),re=/\x60{3}([^\r\n]*)\r?\n([\s\S]*?)\x60{3}/g;
@@ -183,57 +184,9 @@ function chatMenu(chat){
  }));
 }
 
-let browserAIWorker=null;
-let browserTaskNumber=0;
-async function getBrowserAIResponse(messages,mode){
- if(typeof Worker==='undefined')throw Error('Этот браузер не поддерживает запуск локального ИИ.');
- // Run heavy model computations away from the UI thread.
- if(!browserAIWorker)browserAIWorker=new Worker('/browser-ai-worker.js?v=3',{type:'module'});
- const worker=browserAIWorker,id=++browserTaskNumber;
- return new Promise((resolve,reject)=>{
-  const receive=event=>{
-   const msg=event.data;
-   if(msg?.id!==id)return;
-   if(msg.type==='progress'){notice(msg.message);return}
-   worker.removeEventListener('message',receive);
-   worker.removeEventListener('error',fault);
-   if(msg.type==='done')resolve({answer:msg.answer,model:msg.model});
-   else reject(Error(msg.error||'Ошибка браузерной модели.'));
-  };
-  const fault=event=>{
-   worker.removeEventListener('message',receive);
-   worker.removeEventListener('error',fault);
-   try{worker.terminate()}catch{}
-   if(browserAIWorker===worker)browserAIWorker=null;
-   reject(Error('Не удалось загрузить браузерный ИИ. Попробуй другой браузер или проверь интернет.'));
-  };
-  worker.addEventListener('message',receive);
-  worker.addEventListener('error',fault);
-  worker.postMessage({type:'generate',id,messages,mode,language:messages.filter(m=>m.role==='user').at(-1)?.language||languageChoice()});
- });
-}
 async function generateReplyWithFallback(chatId){
- let backendError='';
- try{
-  const result=await request('/chats/'+encodeURIComponent(chatId)+'/reply',{method:'POST',body:'{}'});
-  return result.message;
- }catch(error){
-  if(!state.user||/^(Сессия|Войдите|Требуется вход)/i.test(error.message))throw error;
-  backendError=error.message;
-  if(localStorage.getItem('chechen-local-ai')!=='true')throw Error('Бесплатные облачные модели временно недоступны. Попробуй снова. Локальный ИИ можно включить в инструментах. '+backendError);
-  notice('Запускаю локальный ИИ на устройстве (первый запуск скачивает модель)…');
- }
- const {chat}=await request('/chats/'+encodeURIComponent(chatId));
- const last=[...chat.messages].reverse().find(m=>m.role==='user');
- if(!last||last.voice)throw Error('Для ИИ нужен текстовый вопрос.');
- let generated;
- try{generated=await getBrowserAIResponse(chat.messages,last.mode||'chat')}
- catch(deviceError){throw Error('Не удалось получить ответ. Облако: '+backendError+'. Устройство: '+deviceError.message)}
- notice('Сохраняю ответ…');
- const {message}=await request('/chats/'+encodeURIComponent(chatId)+'/browser-reply',{
-  method:'POST',body:JSON.stringify({replyTo:last.id,answer:generated.answer,model:generated.model})
- });
- return message;
+ const result=await request('/chats/'+encodeURIComponent(chatId)+'/reply',{method:'POST',body:'{}'});
+ return result.message;
 }
 async function sendMessage(e){
  e?.preventDefault();if(state.busy)return;
@@ -242,12 +195,12 @@ async function sendMessage(e){
  try{
   if(!state.chatId)await createChat();
   const chatId=state.chatId;
+  showThinking();
   await request('/chats/'+encodeURIComponent(chatId)+'/messages',{method:'POST',
    body:JSON.stringify({text,mode:$('#mode').value,language:languageChoice()})});
   $('#prompt').value='';$('#prompt').style.height='';
   render({role:'user',content:text});
   await refreshChats();
-  showThinking();
   const message=await generateReplyWithFallback(chatId);
   if(state.chatId===chatId)render(message);
   window.MalikBilling?.refreshStatus();
@@ -465,9 +418,6 @@ $('#logout').addEventListener('click',async()=>{
 });
 $('#language').value=['auto','ce','ru'].includes(localStorage.getItem('malik-language'))?localStorage.getItem('malik-language'):'auto';
 $('#language').addEventListener('change',()=>localStorage.setItem('malik-language',languageChoice()));
-const localToggle=$('#localAiToggle');
-function syncLocalToggle(){localToggle.textContent=localStorage.getItem('chechen-local-ai')==='true'?'⚡ Локальный ИИ: включён (медленнее)':'⚡ Локальный ИИ: выключен (быстрее)'}
-syncLocalToggle();localToggle.addEventListener('click',()=>{localStorage.setItem('chechen-local-ai',localStorage.getItem('chechen-local-ai')==='true'?'false':'true');syncLocalToggle();notice(localStorage.getItem('chechen-local-ai')==='true'?'Локальный ИИ будет резервом: при первом запуске загружается большая модель.':'Теперь ответы будут запрашиваться только у быстрых облачных моделей.')});
 $('#composer').addEventListener('submit',sendMessage);
 $('#prompt').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMessage()}});
 $('#prompt').addEventListener('input',e=>{e.target.style.height='auto';e.target.style.height=Math.min(e.target.scrollHeight,190)+'px'});
