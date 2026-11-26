@@ -200,18 +200,25 @@ async function localSources(){
 const KEYLESS_CLOUD_ENABLED=process.env.KEYLESS_CLOUD_ENABLED!=='false';
 const cloudProviders=()=>{
  const p=[];
- if(process.env.GEMINI_API_KEY)p.push({type:'gemini',model:process.env.GEMINI_MODEL||'gemini-2.5-flash',key:process.env.GEMINI_API_KEY});
+ // Run your own OpenAI-compatible LLM at a private server URL.
+ if(process.env.SELF_HOSTED_AI_URL){
+  const base=process.env.SELF_HOSTED_AI_URL.trim().replace(/\\/+$/,'');
+  if(/^https:\/\//.test(base)){
+   p.push({type:'selfhosted',model:process.env.SELF_HOSTED_AI_MODEL||'local-model',
+    key:process.env.SELF_HOSTED_AI_TOKEN||'',base:base.endsWith('/chat/completions')?base:base+'/v1/chat/completions'});
+  }
+ }
  if(process.env.GROQ_API_KEY)p.push({type:'groq',model:process.env.GROQ_MODEL||'openai/gpt-oss-120b',key:process.env.GROQ_API_KEY,base:'https://api.groq.com/openai/v1/chat/completions'});
  if(process.env.OPENROUTER_API_KEY)p.push({type:'openrouter',model:process.env.OPENROUTER_MODEL||'openrouter/free',key:process.env.OPENROUTER_API_KEY,base:'https://openrouter.ai/api/v1/chat/completions'});
  if(KEYLESS_CLOUD_ENABLED)p.push({type:'llm7',model:'gpt-4.1-nano-2025-04-14',base:'https://api.llm7.io/v1/chat/completions'});
  return p;
 };
-const providerLabel=source=>({gemini:'Google Gemini',groq:'Groq',openrouter:'OpenRouter',llm7:'LLM7'}[source.type]||'ИИ')+': '+source.model;
+const providerLabel=source=>({selfhosted:'Чеченский GPT · своя модель',groq:'Groq',openrouter:'OpenRouter',llm7:'LLM7'}[source.type]||'ИИ')+': '+source.model;
 async function askSource(source,messages,mode,signal){
  const controller=new AbortController();
  const abort=()=>controller.abort();
  signal?.addEventListener('abort',abort,{once:true});
- const timer=setTimeout(abort,source.key?16000:8000);
+ const timer=setTimeout(abort,source.type==='selfhosted'?90000:source.key?16000:8000);
  try{
   const isGemini=source.type==='gemini';
   const endpoint=isGemini?'https://generativelanguage.googleapis.com/v1beta/models/'+encodeURIComponent(source.model)+':generateContent':source.base;
@@ -300,10 +307,9 @@ app.post('/api/chats/:id/reply',userAuth,async(req,res,next)=>{
   try{output=await firstAvailable(cloudProviders(),messages,last.mode)}catch(error){
    const detail=error instanceof AggregateError?error.errors.map(e=>String(e.message)).join(', '):String(error.message||error);
    console.warn('AI provider failures:',detail);
-   const configured=['GEMINI_API_KEY','GROQ_API_KEY','OPENROUTER_API_KEY'].filter(k=>Boolean(process.env[k]));
-   const aqKey=process.env.GEMINI_API_KEY?.startsWith('AQ.');
-   const hint=aqKey?' Ключ Gemini формата AQ. может не поддерживаться обычным REST API. Попробуй новый совместимый ключ или подключи Groq.':'';
-   const publicMessage=configured.length===0?'На сервере не настроен ни один API-ключ. Проверь Environment в Render и перезапусти сервис.':'ИИ не ответил. Диагностика: '+detail+'. HTTP 401/403 — доступ или ключ; 429 — лимит; 404 — модель или адрес; timeout — ожидание; ENOTFOUND — DNS.'+hint;
+   const configured=['SELF_HOSTED_AI_URL','GROQ_API_KEY','OPENROUTER_API_KEY'].filter(k=>Boolean(process.env[k]));
+   const hint=process.env.SELF_HOSTED_AI_URL?' Проверь доступность собственного сервера ИИ и его HTTPS-адрес.':'';
+   const publicMessage=configured.length===0?'На сервере не указан SELF_HOSTED_AI_URL или ключ резервного облачного ИИ. Проверь Environment в Render.':'ИИ не ответил. Диагностика: '+detail+'. HTTP 401/403 — доступ или ключ; 429 — лимит; 404 — модель или адрес; timeout — ожидание; ENOTFOUND — DNS.'+hint;
    return fail(res,503,publicMessage);
   }
   // A single successful response is stored, regardless of how many providers were queried.
