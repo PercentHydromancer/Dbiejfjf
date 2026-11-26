@@ -1,6 +1,7 @@
 'use strict';
 const $ = (s) => document.querySelector(s);
 const state = { chatId: null, chats: [], busy: false, user: null, signup: false };
+const languageChoice=()=>['auto','ce','ru'].includes($('#language')?.value)?$('#language').value:'auto';
 const extension = {html:'html',css:'css',js:'js',javascript:'js',json:'json',python:'py',py:'py',markdown:'md',md:'md',typescript:'ts',ts:'ts',xml:'xml',sql:'sql',sh:'sh',bash:'sh',jsx:'jsx',tsx:'tsx',php:'php',text:'txt'};
 async function request(url,opts={}) {
  const r=await fetch('/api'+url,{credentials:'same-origin',...opts,headers:{'Content-Type':'application/json',...opts.headers}});
@@ -198,7 +199,7 @@ async function getBrowserAIResponse(messages,mode){
   };
   worker.addEventListener('message',receive);
   worker.addEventListener('error',fault);
-  worker.postMessage({type:'generate',id,messages,mode});
+  worker.postMessage({type:'generate',id,messages,mode,language:messages.filter(m=>m.role==='user').at(-1)?.language||languageChoice()});
  });
 }
 async function generateReplyWithFallback(chatId){
@@ -231,7 +232,7 @@ async function sendMessage(e){
   if(!state.chatId)await createChat();
   const chatId=state.chatId;
   await request('/chats/'+encodeURIComponent(chatId)+'/messages',{method:'POST',
-   body:JSON.stringify({text,mode:$('#mode').value})});
+   body:JSON.stringify({text,mode:$('#mode').value,language:languageChoice()})});
   $('#prompt').value='';$('#prompt').style.height='';
   render({role:'user',content:text});
   await refreshChats();
@@ -449,6 +450,8 @@ $('#openNotes').addEventListener('click',()=>notes().catch(e=>alert(e.message)))
 $('#logout').addEventListener('click',async()=>{
  try{await request('/logout',{method:'POST',body:'{}'});location.reload()}catch(e){notice(e.message)}
 });
+$('#language').value=['auto','ce','ru'].includes(localStorage.getItem('malik-language'))?localStorage.getItem('malik-language'):'auto';
+$('#language').addEventListener('change',()=>localStorage.setItem('malik-language',languageChoice()));
 $('#composer').addEventListener('submit',sendMessage);
 $('#prompt').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMessage()}});
 $('#prompt').addEventListener('input',e=>{e.target.style.height='auto';e.target.style.height=Math.min(e.target.scrollHeight,190)+'px'});
